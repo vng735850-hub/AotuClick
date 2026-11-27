@@ -43,23 +43,6 @@ jobs:
           echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
           echo "Project dir: $(dirname "$f")"
 
-      - name: Clean resources (remove icon files that break resource merge)
-        working-directory: ${{ steps.proj.outputs.dir }}
-        run: |
-          RES=app/src/main/res
-          rm -rf "$RES/drawable" "$RES/mipmap-anydpi-v26" "$RES/values/colors.xml"
-          sed -i '/android:icon=/d' app/src/main/AndroidManifest.xml
-          cat > "$RES/values/strings.xml" <<'XML'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-              <string name="app_name">Nvp Klick</string>
-              <string name="service_desc">Cho ph\u00e9p Nvp Klick th\u1ef1c hi\u1ec7n thao t\u00e1c ch\u1ea1m, gi\u1eef, k\u00e9o t\u1ef1 \u0111\u1ed9ng tr\u00ean m\u00e0n h\u00ecnh.</string>
-          </resources>
-          XML
-          sed -i 's/^          //' "$RES/values/strings.xml"
-          echo "--- Resource files ---"
-          find "$RES" -type f | sort
-
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
