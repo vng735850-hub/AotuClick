@@ -67,6 +67,7 @@ object ClickStore {
     var startDelaySec = 0    // đếm ngược trước khi chạy (giây, 0 = chạy ngay)
     var startAt = ""         // hẹn giờ bắt đầu HH:mm[:ss] (trống = không hẹn)
     var volumeHotkey = false // phím giảm âm lượng bật/dừng
+    var panelMode = 2        // kiểu bảng điều khiển: 1 = một điểm chỉ chạm, 2 = nhiều điểm (di chuyển + chạm)
 
     private const val PREF = "nvpklick"
     private var loaded = false
@@ -327,6 +328,7 @@ object ClickStore {
         startDelaySec = p.getInt("startDelaySec", 0).coerceIn(0, 3600)
         startAt = p.getString("startAt", "") ?: ""
         volumeHotkey = p.getBoolean("volumeHotkey", false)
+        panelMode = p.getInt("panelMode", 2).let { if (it == 1) 1 else 2 }
         current()
     }
 
@@ -339,6 +341,7 @@ object ClickStore {
             .putInt("startDelaySec", startDelaySec)
             .putString("startAt", startAt)
             .putBoolean("volumeHotkey", volumeHotkey)
+            .putInt("panelMode", panelMode)
             .putLong("defaultDelay", defaultDelay)
             .putInt("panelAlpha", panelAlpha)
             .putInt("jitterDelayPct", jitterDelayPct)
