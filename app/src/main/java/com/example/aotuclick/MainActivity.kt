@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -19,6 +20,7 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -48,7 +50,9 @@ class MainActivity : Activity() {
 
     private lateinit var container: FrameLayout
     private lateinit var themeSwitch: DayNightSwitch
-    private var scrollView: ScrollView? = null
+    private val pageScrolls = arrayOfNulls<ScrollView>(3)
+    private lateinit var navBar: NotchTabBar
+    private var currentTab = 0
 
     private lateinit var startBtn: IconView
     private lateinit var startLabel: TextView
@@ -206,6 +210,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ClickStore.ensureLoaded(this)
+        currentTab = (savedInstanceState?.getInt("tab", 0) ?: 0).coerceIn(0, 2)
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -218,9 +223,41 @@ class MainActivity : Activity() {
         themeSwitch.setChecked(ClickStore.darkMode, false)
         themeSwitch.onChanged = { dark -> onThemeToggled(dark) }
 
+        // Thanh tab dưới: Trang chủ · Kịch bản · Cài đặt (giữ một đối tượng để hiệu ứng không bị ngắt)
+        navBar = NotchTabBar(this, listOf("Trang chủ", "Kịch bản", "Cài đặt"))
+        navBar.onSelect = { i -> showTab(i) }
+
         container = FrameLayout(this)
         setContentView(container)
         buildUi()
+
+        // Ẩn thanh tab khi bàn phím mở để không chiếm chỗ ô nhập
+        container.viewTreeObserver.addOnGlobalLayoutListener {
+            val r = Rect()
+            container.getWindowVisibleDisplayFrame(r)
+            val screenH = container.rootView.height
+            val keyboardOpen = screenH > 0 && screenH - r.bottom > screenH * 0.15
+            val want = if (keyboardOpen) View.GONE else View.VISIBLE
+            if (navBar.visibility != want) navBar.visibility = want
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("tab", currentTab)
+    }
+
+    /** Chuyển trang theo tab: lưu ô nhập, đóng bàn phím rồi chỉ hiện trang được chọn. */
+    private fun showTab(i: Int) {
+        if (i == currentTab) return
+        saveSettings()
+        currentTab = i
+        currentFocus?.clearFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(window.decorView.windowToken, 0)
+        for (k in pageScrolls.indices) {
+            pageScrolls[k]?.visibility = if (k == i) View.VISIBLE else View.GONE
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -244,13 +281,23 @@ class MainActivity : Activity() {
     }
 
     private fun buildUi() {
-        val keepScroll = scrollView?.scrollY ?: 0
+        val keepScrolls = IntArray(3) { pageScrolls[it]?.scrollY ?: 0 }
         applySystemBars()
         container.setBackgroundColor(cBg)
 
-        val root = LinearLayout(this)
-        root.orientation = LinearLayout.VERTICAL
-        root.setPadding(dp(18), dp(40), dp(18), dp(24))
+        // Khung chính: tiêu đề cố định ở trên, các trang cuộn ở giữa, thanh tab ở dưới
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+
+        fun newPage(): LinearLayout {
+            val p = LinearLayout(this)
+            p.orientation = LinearLayout.VERTICAL
+            p.setPadding(dp(18), dp(4), dp(18), dp(12))
+            return p
+        }
+        val home = newPage()
+        val scripts = newPage()
+        val settings = newPage()
 
         // Tiêu đề (trái) + nút ngày–đêm (góc trên phải)
         val titleCol = LinearLayout(this)
@@ -274,10 +321,9 @@ class MainActivity : Activity() {
 
         val header = LinearLayout(this)
         header.orientation = LinearLayout.HORIZONTAL
-        header.setPadding(0, 0, 0, dp(18))
+        header.setPadding(dp(18), dp(40), dp(18), dp(12))
         header.addView(titleCol)
         header.addView(themeSwitch)
-        root.addView(header)
 
         // Thẻ nút Bắt đầu
         val startCard = makeCard()
@@ -304,7 +350,7 @@ class MainActivity : Activity() {
         modeRow.addView(mode2Btn)
         startCard.addView(modeRow)
         updateModeUi()
-        root.addView(startCard)
+        home.addView(startCard)
 
         // Thẻ quyền
         val permCard = makeCard()
@@ -344,7 +390,7 @@ class MainActivity : Activity() {
                 12f, cSub, false
             )
         )
-        root.addView(permCard)
+        home.addView(permCard)
 
         // Thẻ kịch bản
         val profCard = makeCard()
@@ -379,7 +425,7 @@ class MainActivity : Activity() {
         rowC.addView(weightPill("Xuất file JSON", cGray) { exportProfiles() })
         rowC.addView(weightPill("Nhập file JSON", cGray) { importProfiles() })
         profCard.addView(rowC)
-        root.addView(profCard)
+        scripts.addView(profCard)
 
         // Thẻ cài đặt
         val setCard = makeCard()
@@ -441,7 +487,7 @@ class MainActivity : Activity() {
         })
         setCard.addView(seek)
         updateAlphaLabel()
-        root.addView(setCard)
+        settings.addView(setCard)
 
         // Nút xoá tất cả nút của kịch bản
         val clearBtn = pill("Xoá tất cả nút của kịch bản này", Color.TRANSPARENT) {
@@ -461,7 +507,7 @@ class MainActivity : Activity() {
         )
         clp.setMargins(0, 0, 0, dp(12))
         clearBtn.layoutParams = clp
-        root.addView(clearBtn)
+        scripts.addView(clearBtn)
 
         // Hướng dẫn
         val helpCard = makeCard()
@@ -484,21 +530,50 @@ class MainActivity : Activity() {
                 13f, cSub, false
             )
         )
-        root.addView(helpCard)
+        home.addView(helpCard)
 
-        val scroll = ScrollView(this)
-        scroll.setBackgroundColor(cBg)
-        scroll.addView(root)
+        val pages = arrayOf(home, scripts, settings)
+        val frame = FrameLayout(this)
+        for (i in pages.indices) {
+            val sc = ScrollView(this)
+            sc.setBackgroundColor(cBg)
+            sc.addView(pages[i])
+            sc.visibility = if (i == currentTab) View.VISIBLE else View.GONE
+            frame.addView(
+                sc,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+            pageScrolls[i] = sc
+            val keep = keepScrolls[i]
+            if (keep > 0) sc.post { sc.scrollTo(0, keep) }
+        }
+
+        (navBar.parent as? ViewGroup)?.removeView(navBar)
+        col.addView(header)
+        col.addView(
+            frame,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
+        col.addView(
+            navBar,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
         container.removeAllViews()
         container.addView(
-            scroll,
+            col,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
-        scrollView = scroll
-        if (keepScroll > 0) scroll.post { scroll.scrollTo(0, keepScroll) }
+        navBar.setSelectedIndex(currentTab)
+        navBar.applyTheme()
 
         refreshProfileUi()
         refreshStatus()
