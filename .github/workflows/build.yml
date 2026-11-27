@@ -25,17 +25,38 @@ jobs:
           yes | "$SDKM" --licenses > /dev/null || true
           "$SDKM" "platforms;android-34" "build-tools;34.0.0" || true
 
+      - name: Find Gradle project
+        id: proj
+        run: |
+          echo "Repo layout:"
+          find . -maxdepth 3 -not -path './.git/*' | head -60
+          f=$(find . -maxdepth 3 \( -name settings.gradle -o -name settings.gradle.kts \) -not -path './.git/*' | head -1)
+          if [ -z "$f" ]; then
+            echo "::error::Khong tim thay settings.gradle(.kts) trong repo"
+            exit 1
+          fi
+          echo "Project dir: $(dirname "$f")"
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
 
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          set -o pipefail
+          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Show errors
+        if: failure()
+        run: |
+          grep -n -E "^e: |error:|What went wrong|FAILURE|Execution failed|Could not|not found" -A4 build.log 2>/dev/null | head -80 || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: NvpKlick-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ steps.proj.outputs.dir }}/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
