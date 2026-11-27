@@ -2,6 +2,7 @@ package com.example.autoclick
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -33,6 +34,7 @@ class MainActivity : Activity() {
     private val cGreen = Color.rgb(46, 160, 67)
     private val cRed = Color.rgb(211, 47, 47)
     private val cBlue = Color.rgb(37, 99, 235)
+    private val cGray = Color.rgb(55, 62, 80)
 
     private lateinit var startBtn: IconView
     private lateinit var startLabel: TextView
@@ -40,8 +42,14 @@ class MainActivity : Activity() {
     private lateinit var accDot: View
     private lateinit var overlayBtn: TextView
     private lateinit var accBtn: TextView
+    private lateinit var profileName: TextView
+    private lateinit var profileInfo: TextView
     private lateinit var loopsInput: EditText
+    private lateinit var stopMinInput: EditText
+    private lateinit var stopTapsInput: EditText
     private lateinit var delayInput: EditText
+    private lateinit var jDelayInput: EditText
+    private lateinit var jPxInput: EditText
     private lateinit var alphaLabel: TextView
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -99,6 +107,16 @@ class MainActivity : Activity() {
         return v
     }
 
+    /** Nút bo tròn chia đều chiều ngang trong một hàng. */
+    private fun weightPill(t: String, bg: Int, onClick: () -> Unit): TextView {
+        val v = pill(t, bg, onClick)
+        val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        lp.setMargins(dp(3), dp(10), dp(3), 0)
+        v.layoutParams = lp
+        v.setPadding(dp(6), dp(10), dp(6), dp(10))
+        return v
+    }
+
     private fun numberInput(value: String): EditText {
         val e = EditText(this)
         e.inputType = InputType.TYPE_CLASS_NUMBER
@@ -114,6 +132,19 @@ class MainActivity : Activity() {
         lp.setMargins(0, dp(4), 0, 0)
         e.layoutParams = lp
         return e
+    }
+
+    private fun addLabeled(parent: LinearLayout, label: String, input: EditText) {
+        val l = textView(label, 13f, cSub, false)
+        l.setPadding(0, dp(12), 0, 0)
+        parent.addView(l)
+        parent.addView(input)
+    }
+
+    private fun sectionLabel(t: String): TextView {
+        val v = textView(t, 12f, cBlue, true)
+        v.setPadding(0, dp(14), 0, 0)
+        return v
     }
 
     private fun permRow(title: String, dot: View, btn: TextView): LinearLayout {
@@ -133,6 +164,14 @@ class MainActivity : Activity() {
 
         row.addView(btn)
         return row
+    }
+
+    private fun versionName(): String {
+        return try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+        } catch (e: Exception) {
+            ""
+        }
     }
 
     // ---------- Vòng đời ----------
@@ -155,7 +194,13 @@ class MainActivity : Activity() {
 
         // Tiêu đề
         root.addView(textView("Nvp Klick", 28f, cText, true))
-        val sub = textView("Tự động chạm · giữ · kéo trên màn hình", 14f, cSub, false)
+        val ver = versionName()
+        val subText = if (ver.isNotEmpty()) {
+            "Tự động chạm · giữ · kéo  ·  v$ver"
+        } else {
+            "Tự động chạm · giữ · kéo"
+        }
+        val sub = textView(subText, 14f, cSub, false)
         sub.setPadding(0, dp(2), 0, dp(18))
         root.addView(sub)
 
@@ -197,21 +242,48 @@ class MainActivity : Activity() {
         permCard.addView(permRow("Dịch vụ Trợ năng (Accessibility)", accDot, accBtn))
         root.addView(permCard)
 
+        // Thẻ kịch bản
+        val profCard = makeCard()
+        profCard.addView(textView("Kịch bản", 16f, cText, true))
+        profileName = textView("", 18f, cText, true)
+        profileName.setPadding(0, dp(6), 0, 0)
+        profCard.addView(profileName)
+        profileInfo = textView("", 13f, cSub, false)
+        profCard.addView(profileInfo)
+
+        val rowA = LinearLayout(this)
+        rowA.orientation = LinearLayout.HORIZONTAL
+        rowA.addView(weightPill("Chọn", cBlue) { chooseProfile() })
+        rowA.addView(weightPill("Mới", cGreen) { newProfile() })
+        rowA.addView(weightPill("Nhân đôi", cGray) { duplicateProfile() })
+        profCard.addView(rowA)
+
+        val rowB = LinearLayout(this)
+        rowB.orientation = LinearLayout.HORIZONTAL
+        rowB.addView(weightPill("Đổi tên", cGray) { renameProfile() })
+        rowB.addView(weightPill("Xoá", cRed) { deleteProfile() })
+        profCard.addView(rowB)
+        root.addView(profCard)
+
         // Thẻ cài đặt
         val setCard = makeCard()
-        val setTitle = textView("Cài đặt", 16f, cText, true)
-        setTitle.setPadding(0, 0, 0, dp(8))
-        setCard.addView(setTitle)
+        setCard.addView(textView("Cài đặt", 16f, cText, true))
 
-        setCard.addView(textView("Số vòng lặp (0 = lặp vô hạn)", 13f, cSub, false))
+        setCard.addView(sectionLabel("THEO KỊCH BẢN"))
         loopsInput = numberInput(ClickStore.loops.toString())
-        setCard.addView(loopsInput)
+        addLabeled(setCard, "Số vòng lặp (0 = lặp vô hạn)", loopsInput)
+        stopMinInput = numberInput(ClickStore.stopMinutes.toString())
+        addLabeled(setCard, "Tự dừng sau (phút) (0 = không giới hạn)", stopMinInput)
+        stopTapsInput = numberInput(ClickStore.stopTaps.toString())
+        addLabeled(setCard, "Tự dừng sau số lần thao tác (0 = không giới hạn)", stopTapsInput)
 
-        val delayLabel = textView("Độ trễ mặc định cho nút mới (ms)", 13f, cSub, false)
-        delayLabel.setPadding(0, dp(12), 0, 0)
-        setCard.addView(delayLabel)
+        setCard.addView(sectionLabel("CHUNG"))
         delayInput = numberInput(ClickStore.defaultDelay.toString())
-        setCard.addView(delayInput)
+        addLabeled(setCard, "Độ trễ mặc định cho nút mới (ms)", delayInput)
+        jDelayInput = numberInput(ClickStore.jitterDelayPct.toString())
+        addLabeled(setCard, "Ngẫu nhiên độ trễ ± (%) (0 = tắt)", jDelayInput)
+        jPxInput = numberInput(ClickStore.jitterPx.toString())
+        addLabeled(setCard, "Lệch vị trí chạm ngẫu nhiên ± (px) (0 = tắt)", jPxInput)
 
         alphaLabel = textView("", 13f, cSub, false)
         alphaLabel.setPadding(0, dp(12), 0, dp(4))
@@ -237,11 +309,12 @@ class MainActivity : Activity() {
         updateAlphaLabel()
         root.addView(setCard)
 
-        // Nút xoá tất cả
-        val clearBtn = pill("Xoá tất cả các nút", Color.TRANSPARENT) {
+        // Nút xoá tất cả nút của kịch bản
+        val clearBtn = pill("Xoá tất cả nút của kịch bản này", Color.TRANSPARENT) {
             ClickStore.actions.clear()
             ClickStore.save(this@MainActivity)
             FloatingService.instance?.refresh()
+            refreshProfileUi()
             Toast.makeText(this@MainActivity, "Đã xoá tất cả nút", Toast.LENGTH_SHORT).show()
         }
         clearBtn.background = roundBg(Color.TRANSPARENT, 18, cRed, 1)
@@ -267,7 +340,9 @@ class MainActivity : Activity() {
                     "3. Trên bảng nổi: ＋ thêm nút chạm, ➜ thêm nút kéo, － xoá nút cuối, ⚙ mở cài đặt, ˄ thu nhỏ thành bong bóng (chạm bong bóng để mở lại), ✕ đóng.\n" +
                     "4. Kéo từng nút số tới vị trí cần chạm. Chạm vào nút (không kéo) để chọn kiểu Chạm / Chạm đúp / Giữ / Kéo, chỉnh độ trễ, đổi thứ tự hoặc xoá.\n" +
                     "5. Kiểu Kéo có thêm chấm xanh ▸ là điểm kết thúc.\n" +
-                    "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng. Ô số bên dưới nút ▶ hiện thời gian đã chạy (giờ:phút:giây).",
+                    "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng. Ô số dưới nút ▶ hiện thời gian đã chạy (giờ:phút:giây) và số lần thao tác (×N).\n" +
+                    "7. Mỗi kịch bản có danh sách nút riêng và điều kiện tự dừng riêng (số vòng, số phút, số lần thao tác).\n" +
+                    "8. Thông báo của app có nút Dừng, Mở bảng và Tắt để điều khiển nhanh khi bảng đang thu nhỏ.",
                 13f, cSub, false
             )
         )
@@ -277,16 +352,114 @@ class MainActivity : Activity() {
         scroll.setBackgroundColor(cBg)
         scroll.addView(root)
         setContentView(scroll)
+
+        refreshProfileUi()
     }
 
     override fun onResume() {
         super.onResume()
         refreshStatus()
+        if (::profileName.isInitialized) refreshProfileUi()
     }
 
     override fun onPause() {
         super.onPause()
-        if (::loopsInput.isInitialized && ::delayInput.isInitialized) saveSettings()
+        if (::jPxInput.isInitialized) saveSettings()
+    }
+
+    // ---------- Kịch bản ----------
+
+    private fun refreshProfileUi() {
+        val c = ClickStore.current()
+        profileName.text = c.name
+        profileInfo.text = "Kịch bản ${ClickStore.activeIndex + 1}/${ClickStore.profiles.size} · ${c.actions.size} nút"
+    }
+
+    /** Nạp lại các ô nhập theo kịch bản đang chọn. */
+    private fun loadFields() {
+        loopsInput.setText(ClickStore.loops.toString())
+        stopMinInput.setText(ClickStore.stopMinutes.toString())
+        stopTapsInput.setText(ClickStore.stopTaps.toString())
+        delayInput.setText(ClickStore.defaultDelay.toString())
+        jDelayInput.setText(ClickStore.jitterDelayPct.toString())
+        jPxInput.setText(ClickStore.jitterPx.toString())
+    }
+
+    private fun afterProfileChange() {
+        ClickStore.save(this)
+        FloatingService.instance?.refresh()
+        loadFields()
+        refreshProfileUi()
+    }
+
+    private fun askName(title: String, initial: String, onOk: (String) -> Unit) {
+        val input = EditText(this)
+        input.setText(initial)
+        input.isSingleLine = true
+        input.setTextColor(Color.WHITE)
+        val box = LinearLayout(this)
+        box.setPadding(dp(20), dp(8), dp(20), 0)
+        box.addView(input)
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle(title)
+            .setView(box)
+            .setPositiveButton("Lưu") { _, _ ->
+                val n = input.text.toString().trim()
+                if (n.isNotEmpty()) onOk(n)
+            }
+            .setNegativeButton("Huỷ", null)
+            .show()
+    }
+
+    private fun chooseProfile() {
+        saveSettings()
+        val names = ClickStore.profiles.map { it.name + " (" + it.actions.size + " nút)" }.toTypedArray()
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Chọn kịch bản")
+            .setItems(names) { _, which ->
+                ClickStore.selectProfile(which)
+                afterProfileChange()
+            }
+            .show()
+    }
+
+    private fun newProfile() {
+        saveSettings()
+        askName("Kịch bản mới", "Kịch bản ${ClickStore.profiles.size + 1}") { n ->
+            ClickStore.addProfile(n)
+            afterProfileChange()
+        }
+    }
+
+    private fun duplicateProfile() {
+        saveSettings()
+        ClickStore.duplicateActive()
+        afterProfileChange()
+    }
+
+    private fun renameProfile() {
+        askName("Đổi tên kịch bản", ClickStore.current().name) { n ->
+            ClickStore.current().name = n
+            afterProfileChange()
+        }
+    }
+
+    private fun deleteProfile() {
+        val only = ClickStore.profiles.size <= 1
+        val msg = if (only) {
+            "Đây là kịch bản duy nhất, các nút sẽ được xoá hết nhưng kịch bản vẫn giữ lại."
+        } else {
+            "Xoá kịch bản \"" + ClickStore.current().name + "\"?"
+        }
+        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+            .setTitle("Xoá kịch bản")
+            .setMessage(msg)
+            .setPositiveButton("Xoá") { _, _ ->
+                ClickStore.deleteActive()
+                afterProfileChange()
+            }
+            .setNegativeButton("Huỷ", null)
+            .show()
     }
 
     // ---------- Xử lý ----------
@@ -295,9 +468,16 @@ class MainActivity : Activity() {
         alphaLabel.text = "Độ đậm bảng điều khiển nổi: ${ClickStore.panelAlpha}%"
     }
 
+    private fun intOf(e: EditText, max: Int): Int =
+        e.text.toString().toIntOrNull()?.coerceIn(0, max) ?: 0
+
     private fun saveSettings() {
-        ClickStore.loops = loopsInput.text.toString().toIntOrNull()?.coerceAtLeast(0) ?: 0
+        ClickStore.loops = intOf(loopsInput, 1_000_000)
+        ClickStore.stopMinutes = intOf(stopMinInput, 100_000)
+        ClickStore.stopTaps = intOf(stopTapsInput, 100_000_000)
         ClickStore.defaultDelay = delayInput.text.toString().toLongOrNull()?.coerceAtLeast(0L) ?: 500L
+        ClickStore.jitterDelayPct = intOf(jDelayInput, 100)
+        ClickStore.jitterPx = intOf(jPxInput, 100)
         ClickStore.save(this)
     }
 
