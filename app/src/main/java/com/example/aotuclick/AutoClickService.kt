@@ -5,6 +5,7 @@ import android.accessibilityservice.GestureDescription
 import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
+import kotlin.random.Random
 import android.view.accessibility.AccessibilityEvent
 
 class AutoClickService : AccessibilityService() {
@@ -20,11 +21,20 @@ class AutoClickService : AccessibilityService() {
 
     val isRunning: Boolean get() = running
 
+    /** Số thao tác đã thực hiện trong lần chạy gần nhất. */
+    @Volatile
+    var tapCount = 0
+        private set
+
+    private var tapLimit = 0
+
     /**
      * Chạy kịch bản theo thứ tự các nút.
-     * loops = 0 → lặp vô hạn; loops = n → lặp n vòng rồi tự dừng.
+     * loops    = 0 → lặp vô hạn; loops = n → lặp n vòng rồi tự dừng.
+     * maxMillis> 0 → tự dừng sau khoảng thời gian này.
+     * maxTaps  > 0 → tự dừng sau số thao tác này.
      */
-    fun run(list: List<ClickAction>, loops: Int, onDone: () -> Unit) {
+    fun run(list: List<ClickAction>, loops: Int, maxMillis: Long, maxTaps: Int, onDone: () -> Unit) {
         stop()
         if (list.isEmpty()) {
             onDone()
@@ -33,7 +43,15 @@ class AutoClickService : AccessibilityService() {
         running = true
         generation++
         onFinished = onDone
-        step(generation, list.map { it.copy() }, 0, 0, loops)
+        tapCount = 0
+        tapLimit = maxTaps
+        val gen = generation
+        if (maxMillis > 0L) {
+            handler.postDelayed({
+                if (running && gen == generation) finishRun()
+            }, maxMillis)
+        }
+        step(gen, list.map { it.copy() }, 0, 0, loops)
     }
 
     fun stop() {
@@ -70,10 +88,15 @@ class AutoClickService : AccessibilityService() {
         val a = list[idx]
         fun next() {
             if (running && gen == generation) {
-                handler.postDelayed(
-                    { step(gen, list, idx + 1, round, loops) },
-                    a.delayMs.coerceAtLeast(0L)
-                )
+                tapCount++
+                if (tapLimit > 0 && tapCount >= tapLimit) {
+                    finishRun()
+                } else {
+                    handler.postDelayed(
+                        { step(gen, list, idx + 1, round, loops) },
+                        jitteredDelay(a.delayMs)
+                    )
+                }
             }
         }
         val callback = object : GestureResultCallback() {
@@ -91,26 +114,46 @@ class AutoClickService : AccessibilityService() {
         }
     }
 
+    /** Độ trễ có cộng ngẫu nhiên ± % (nếu bật). */
+    private fun jitteredDelay(base: Long): Long {
+        val pct = ClickStore.jitterDelayPct
+        if (pct <= 0) return base.coerceAtLeast(0L)
+        val span = base * pct / 100.0
+        val d = base + ((Random.nextDouble() * 2.0 - 1.0) * span).toLong()
+        return d.coerceAtLeast(0L)
+    }
+
+    /** Lệch vị trí ngẫu nhiên ± px (nếu bật). */
+    private fun jit(v: Float): Float {
+        val px = ClickStore.jitterPx
+        if (px <= 0) return v
+        return (v + (Random.nextFloat() * 2f - 1f) * px).coerceAtLeast(0f)
+    }
+
     private fun buildGesture(a: ClickAction): GestureDescription {
         val maxDur = GestureDescription.getMaxGestureDuration()
         val b = GestureDescription.Builder()
+        val x = jit(a.x)
+        val y = jit(a.y)
         when (a.type) {
             ActionType.TAP -> {
-                b.addStroke(GestureDescription.StrokeDescription(point(a.x, a.y), 0, 40))
+                b.addStroke(GestureDescription.StrokeDescription(point(x, y), 0, 40))
             }
             ActionType.DOUBLE -> {
-                b.addStroke(GestureDescription.StrokeDescription(point(a.x, a.y), 0, 40))
-                b.addStroke(GestureDescription.StrokeDescription(point(a.x, a.y), 120, 40))
+                b.addStroke(GestureDescription.StrokeDescription(point(x, y), 0, 40))
+                b.addStroke(GestureDescription.StrokeDescription(point(x, y), 120, 40))
             }
             ActionType.HOLD -> {
                 val d = a.effectiveDuration().coerceIn(1L, maxDur)
-                b.addStroke(GestureDescription.StrokeDescription(point(a.x, a.y), 0, d))
+                b.addStroke(GestureDescription.StrokeDescription(point(x, y), 0, d))
             }
             ActionType.SWIPE -> {
                 val d = a.effectiveDuration().coerceIn(1L, maxDur)
+                val ex = jit(a.x2)
+                val ey = jit(a.y2)
                 val p = Path().apply {
-                    moveTo(a.x, a.y)
-                    lineTo(a.x2, a.y2)
+                    moveTo(x, y)
+                    lineTo(ex, ey)
                 }
                 b.addStroke(GestureDescription.StrokeDescription(p, 0, d))
             }
