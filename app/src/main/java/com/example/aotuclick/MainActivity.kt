@@ -17,7 +17,9 @@ import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -26,15 +28,20 @@ import android.widget.Toast
 
 class MainActivity : Activity() {
 
-    private val cBg = Color.rgb(15, 17, 23)
-    private val cCard = Color.rgb(26, 29, 38)
-    private val cField = Color.rgb(38, 42, 54)
-    private val cText = Color.WHITE
-    private val cSub = Color.rgb(150, 156, 170)
+    // Màu nền/chữ đổi theo chế độ sáng/tối (AppTheme); màu nút giữ cố định
+    private val cBg: Int get() = AppTheme.bg
+    private val cCard: Int get() = AppTheme.card
+    private val cField: Int get() = AppTheme.field
+    private val cText: Int get() = AppTheme.text
+    private val cSub: Int get() = AppTheme.sub
     private val cGreen = Color.rgb(46, 160, 67)
     private val cRed = Color.rgb(211, 47, 47)
     private val cBlue = Color.rgb(37, 99, 235)
-    private val cGray = Color.rgb(55, 62, 80)
+    private val cGray: Int get() = AppTheme.gray
+
+    private lateinit var container: FrameLayout
+    private lateinit var themeSwitch: DayNightSwitch
+    private var scrollView: ScrollView? = null
 
     private lateinit var startBtn: IconView
     private lateinit var startLabel: TextView
@@ -179,8 +186,6 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ClickStore.ensureLoaded(this)
-        window.statusBarColor = cBg
-        window.navigationBarColor = cBg
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -188,12 +193,50 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
 
+        // Nút ngày–đêm ở góc trên phải (giữ nguyên một đối tượng để hiệu ứng không bị ngắt khi vẽ lại màu)
+        themeSwitch = DayNightSwitch(this)
+        themeSwitch.setChecked(ClickStore.darkMode, false)
+        themeSwitch.onChanged = { dark -> onThemeToggled(dark) }
+
+        container = FrameLayout(this)
+        setContentView(container)
+        buildUi()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun applySystemBars() {
+        window.statusBarColor = cBg
+        window.navigationBarColor = cBg
+        window.decorView.systemUiVisibility = if (AppTheme.dark) {
+            0
+        } else {
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+    }
+
+    /** Đổi chế độ sáng/tối: lưu, đổi màu bảng nổi, dựng lại màn hình với màu mới. */
+    private fun onThemeToggled(dark: Boolean) {
+        saveSettings()
+        ClickStore.darkMode = dark
+        ClickStore.save(this)
+        FloatingService.instance?.applyTheme()
+        buildUi()
+    }
+
+    private fun buildUi() {
+        val keepScroll = scrollView?.scrollY ?: 0
+        applySystemBars()
+        container.setBackgroundColor(cBg)
+
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setPadding(dp(18), dp(40), dp(18), dp(24))
 
-        // Tiêu đề
-        root.addView(textView("Nvp Klick", 28f, cText, true))
+        // Tiêu đề (trái) + nút ngày–đêm (góc trên phải)
+        val titleCol = LinearLayout(this)
+        titleCol.orientation = LinearLayout.VERTICAL
+        titleCol.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        titleCol.addView(textView("Nvp Klick", 28f, cText, true))
         val ver = versionName()
         val subText = if (ver.isNotEmpty()) {
             "Tự động chạm · giữ · kéo  ·  v$ver"
@@ -201,8 +244,20 @@ class MainActivity : Activity() {
             "Tự động chạm · giữ · kéo"
         }
         val sub = textView(subText, 14f, cSub, false)
-        sub.setPadding(0, dp(2), 0, dp(18))
-        root.addView(sub)
+        sub.setPadding(0, dp(2), 0, 0)
+        titleCol.addView(sub)
+
+        (themeSwitch.parent as? ViewGroup)?.removeView(themeSwitch)
+        val swLp = LinearLayout.LayoutParams(dp(88), dp(37))
+        swLp.setMargins(dp(12), dp(4), 0, 0)
+        themeSwitch.layoutParams = swLp
+
+        val header = LinearLayout(this)
+        header.orientation = LinearLayout.HORIZONTAL
+        header.setPadding(0, 0, 0, dp(18))
+        header.addView(titleCol)
+        header.addView(themeSwitch)
+        root.addView(header)
 
         // Thẻ nút Bắt đầu
         val startCard = makeCard()
@@ -351,9 +406,19 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this)
         scroll.setBackgroundColor(cBg)
         scroll.addView(root)
-        setContentView(scroll)
+        container.removeAllViews()
+        container.addView(
+            scroll,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        scrollView = scroll
+        if (keepScroll > 0) scroll.post { scroll.scrollTo(0, keepScroll) }
 
         refreshProfileUi()
+        refreshStatus()
     }
 
     override fun onResume() {
@@ -396,11 +461,11 @@ class MainActivity : Activity() {
         val input = EditText(this)
         input.setText(initial)
         input.isSingleLine = true
-        input.setTextColor(Color.WHITE)
+        input.setTextColor(cText)
         val box = LinearLayout(this)
         box.setPadding(dp(20), dp(8), dp(20), 0)
         box.addView(input)
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+        AlertDialog.Builder(this, AppTheme.alertTheme)
             .setTitle(title)
             .setView(box)
             .setPositiveButton("Lưu") { _, _ ->
@@ -414,7 +479,7 @@ class MainActivity : Activity() {
     private fun chooseProfile() {
         saveSettings()
         val names = ClickStore.profiles.map { it.name + " (" + it.actions.size + " nút)" }.toTypedArray()
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+        AlertDialog.Builder(this, AppTheme.alertTheme)
             .setTitle("Chọn kịch bản")
             .setItems(names) { _, which ->
                 ClickStore.selectProfile(which)
@@ -451,7 +516,7 @@ class MainActivity : Activity() {
         } else {
             "Xoá kịch bản \"" + ClickStore.current().name + "\"?"
         }
-        AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+        AlertDialog.Builder(this, AppTheme.alertTheme)
             .setTitle("Xoá kịch bản")
             .setMessage(msg)
             .setPositiveButton("Xoá") { _, _ ->
