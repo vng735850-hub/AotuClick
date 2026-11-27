@@ -11,6 +11,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -32,6 +33,9 @@ class FloatingService : Service() {
         @Volatile var instance: FloatingService? = null
         private const val CHANNEL_ID = "nvpklick_running"
         private const val NOTI_ID = 1
+        private const val ACTION_STOP_RUN = "com.example.autoclick.STOP_RUN"
+        private const val ACTION_SHOW = "com.example.autoclick.SHOW_PANEL"
+        private const val ACTION_QUIT = "com.example.autoclick.QUIT"
         // 999 giờ 59 phút 59 giây
         private const val MAX_SECONDS = 3_599_999L
     }
@@ -88,11 +92,18 @@ class FloatingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
         ClickStore.ensureLoaded(this)
-        if (panelView == null) {
-            setup()
-        } else {
-            refresh()
-            applyAlpha()
+        when (intent?.action) {
+            ACTION_STOP_RUN -> AutoClickService.instance?.stop()
+            ACTION_SHOW -> expand()
+            ACTION_QUIT -> stopSelf()
+            else -> {
+                if (panelView == null) {
+                    setup()
+                } else {
+                    refresh()
+                    applyAlpha()
+                }
+            }
         }
         return START_NOT_STICKY
     }
@@ -103,6 +114,18 @@ class FloatingService : Service() {
     }
 
     // ---------- Foreground notification ----------
+
+    private fun svcIntent(action: String, code: Int): PendingIntent =
+        PendingIntent.getService(
+            this, code,
+            Intent(this, FloatingService::class.java).setAction(action),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+    private fun notiAction(label: String, iconRes: Int, action: String, code: Int): Notification.Action =
+        Notification.Action.Builder(
+            Icon.createWithResource(this, iconRes), label, svcIntent(action, code)
+        ).build()
 
     private fun startAsForeground() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -119,6 +142,9 @@ class FloatingService : Service() {
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(pi)
             .setOngoing(true)
+            .addAction(notiAction("Dừng", android.R.drawable.ic_media_pause, ACTION_STOP_RUN, 1))
+            .addAction(notiAction("Mở bảng", android.R.drawable.ic_menu_view, ACTION_SHOW, 2))
+            .addAction(notiAction("Tắt", android.R.drawable.ic_menu_close_clear_cancel, ACTION_QUIT, 3))
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTI_ID, noti, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -273,7 +299,8 @@ class FloatingService : Service() {
         val h = totalSec / 3600L
         val m = (totalSec % 3600L) / 60L
         val s = totalSec % 60L
-        timerText.text = String.format(Locale.US, "%03d:%02d:%02d", h, m, s)
+        val n = AutoClickService.instance?.tapCount ?: 0
+        timerText.text = String.format(Locale.US, "%03d:%02d:%02d\n×%d", h, m, s, n)
     }
 
     // ---------- Các nút đánh số ----------
@@ -517,7 +544,12 @@ class FloatingService : Service() {
         ClickStore.save(this)
 
         setRunningUi(true)
-        svc.run(ClickStore.actions, ClickStore.loops) { setRunningUi(false) }
+        svc.run(
+            ClickStore.actions,
+            ClickStore.loops,
+            ClickStore.stopMinutes * 60_000L,
+            ClickStore.stopTaps
+        ) { setRunningUi(false) }
     }
 
     override fun onDestroy() {
