@@ -10,7 +10,7 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
-enum class IconKind { PLAY, PAUSE, STOP, PLUS, MINUS, GEAR, CLOSE, GRIP, COLLAPSE, SWIPE, LOGO }
+enum class IconKind { PLAY, PAUSE, STOP, PLUS, MINUS, GEAR, CLOSE, GRIP, COLLAPSE, SWIPE, LOGO, EYE, EYE_OFF }
 
 /** Biểu tượng vẽ hoàn toàn bằng code, không cần file ảnh hay tài nguyên. */
 class IconView(
@@ -96,6 +96,22 @@ class IconView(
                 path.lineTo(cx + s * 0.7f, cy)
                 path.lineTo(cx + s * 0.2f, cy + s * 0.5f)
                 canvas.drawPath(path, paint)
+            }
+            IconKind.EYE, IconKind.EYE_OFF -> {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = s * 0.2f
+                path.reset()
+                path.moveTo(cx - s * 0.85f, cy)
+                path.quadTo(cx, cy - s * 0.95f, cx + s * 0.85f, cy)
+                path.quadTo(cx, cy + s * 0.95f, cx - s * 0.85f, cy)
+                canvas.drawPath(path, paint)
+                paint.style = Paint.Style.FILL
+                canvas.drawCircle(cx, cy, s * 0.26f, paint)
+                if (kind == IconKind.EYE_OFF) {
+                    paint.style = Paint.Style.STROKE
+                    paint.strokeWidth = s * 0.26f
+                    canvas.drawLine(cx - s * 0.7f, cy + s * 0.75f, cx + s * 0.7f, cy - s * 0.75f, paint)
+                }
             }
             IconKind.LOGO -> {
                 paint.style = Paint.Style.STROKE
