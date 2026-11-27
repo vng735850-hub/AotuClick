@@ -12,6 +12,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -224,39 +225,32 @@ class FloatingService : Service() {
         PendingIntent.getService(
             this, code,
             Intent(this, FloatingService::class.java).setAction(action),
-            Compat.immutableFlag or PendingIntent.FLAG_UPDATE_CURRENT
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-
-    /** Notification.Builder: có kênh thông báo từ Android 8.0, bản cũ dùng setPriority. */
-    @Suppress("DEPRECATION")
-    private fun newBuilder(channel: String): Notification.Builder =
-        if (Build.VERSION.SDK_INT >= 26) {
-            Notification.Builder(this, channel)
-        } else {
-            Notification.Builder(this).setPriority(Notification.PRIORITY_LOW)
-        }
+    private fun notiAction(label: String, iconRes: Int, action: String, code: Int): Notification.Action =
+        Notification.Action.Builder(
+            Icon.createWithResource(this, iconRes), label, svcIntent(action, code)
+        ).build()
 
     private fun startAsForeground() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26) {
-            nm.createNotificationChannel(
-                NotificationChannel(CHANNEL_ID, "Nvp Klick", NotificationManager.IMPORTANCE_LOW)
-            )
-        }
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Nvp Klick", NotificationManager.IMPORTANCE_LOW)
+        )
         val pi = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
-            Compat.immutableFlag or PendingIntent.FLAG_UPDATE_CURRENT
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-        val noti = newBuilder(CHANNEL_ID)
+        val noti = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Nvp Klick")
             .setContentText("Bảng điều khiển nổi đang bật")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(pi)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_media_pause, "Dừng", svcIntent(ACTION_STOP_RUN, 1))
-            .addAction(android.R.drawable.ic_menu_view, "Mở bảng", svcIntent(ACTION_SHOW, 2))
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Tắt", svcIntent(ACTION_QUIT, 3))
+            .addAction(notiAction("Dừng", android.R.drawable.ic_media_pause, ACTION_STOP_RUN, 1))
+            .addAction(notiAction("Mở bảng", android.R.drawable.ic_menu_view, ACTION_SHOW, 2))
+            .addAction(notiAction("Tắt", android.R.drawable.ic_menu_close_clear_cancel, ACTION_QUIT, 3))
             .build()
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTI_ID, noti, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -270,7 +264,7 @@ class FloatingService : Service() {
     private fun overlayParams(w: Int, h: Int, px: Int, py: Int): WindowManager.LayoutParams {
         val lp = WindowManager.LayoutParams(
             w, h,
-            Compat.overlayType,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
@@ -877,16 +871,14 @@ class FloatingService : Service() {
     private fun postStoppedNotice() {
         try {
             val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            if (Build.VERSION.SDK_INT >= 26) {
-                nm.createNotificationChannel(
-                    NotificationChannel(ALERT_CHANNEL, "Nvp Klick - cảnh báo", NotificationManager.IMPORTANCE_DEFAULT)
-                )
-            }
+            nm.createNotificationChannel(
+                NotificationChannel(ALERT_CHANNEL, "Nvp Klick - cảnh báo", NotificationManager.IMPORTANCE_DEFAULT)
+            )
             val pi = PendingIntent.getActivity(
                 this, 4, Intent(this, MainActivity::class.java),
-                Compat.immutableFlag or PendingIntent.FLAG_UPDATE_CURRENT
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
-            val n = newBuilder(ALERT_CHANNEL)
+            val n = Notification.Builder(this, ALERT_CHANNEL)
                 .setContentTitle("Bảng điều khiển đã tắt")
                 .setContentText("Nvp Klick đã bị dừng. Chạm để mở lại.")
                 .setSmallIcon(android.R.drawable.ic_dialog_alert)

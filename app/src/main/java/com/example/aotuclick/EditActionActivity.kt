@@ -25,6 +25,8 @@ class EditActionActivity : Activity() {
     private lateinit var delayInput: EditText
     private lateinit var durInput: EditText
     private lateinit var durLabel: TextView
+    private lateinit var groupFromInput: EditText
+    private lateinit var groupRepeatInput: EditText
     private val radioIds = HashMap<Int, ActionType>()
 
     private val cCard: Int get() = AppTheme.card
@@ -97,6 +99,13 @@ class EditActionActivity : Activity() {
         root.addView(durLabel)
         durInput = field(if (action.durationMs > 0) action.durationMs.toString() else "")
         root.addView(durInput)
+
+        root.addView(label("Nhóm lặp: nút này là nút CUỐI của nhóm, nhóm bắt đầu từ nút số… (để trống = không dùng)"))
+        groupFromInput = field(if (action.groupFrom > 0) action.groupFrom.toString() else "")
+        root.addView(groupFromInput)
+        root.addView(label("Tổng số lần chạy nhóm (từ 2 trở lên). Ví dụ nút 3 điền 1 và 5: nút 1–3 chạy 5 lần rồi mới sang nút 4"))
+        groupRepeatInput = field(if (action.groupRepeat > 0) action.groupRepeat.toString() else "")
+        root.addView(groupRepeatInput)
 
         group.setOnCheckedChangeListener { _, _ -> updateDurationVisibility() }
         updateDurationVisibility()
@@ -186,6 +195,8 @@ class EditActionActivity : Activity() {
         action.type = newType
         action.delayMs = delayInput.text.toString().toLongOrNull()?.coerceAtLeast(0L) ?: action.delayMs
         action.durationMs = durInput.text.toString().toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        action.groupFrom = groupFromInput.text.toString().toIntOrNull()?.coerceIn(0, index + 1) ?: 0
+        action.groupRepeat = groupRepeatInput.text.toString().toIntOrNull()?.coerceIn(0, 100000) ?: 0
     }
 
     private fun move(dir: Int) {
