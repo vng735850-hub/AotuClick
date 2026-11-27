@@ -6,6 +6,7 @@ import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
 import kotlin.random.Random
+import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 
 class AutoClickService : AccessibilityService() {
@@ -20,6 +21,26 @@ class AutoClickService : AccessibilityService() {
     private var onFinished: (() -> Unit)? = null
 
     val isRunning: Boolean get() = running
+
+    // Tạm dừng / chạy tiếp
+    private var paused = false
+    private var resumeAction: (() -> Unit)? = null
+    val isPaused: Boolean get() = paused
+
+    // Đếm số lần đã lặp của từng nhóm (chỉ số = nút kết thúc nhóm)
+    private var groupCounts = IntArray(0)
+
+    fun pause() {
+        if (running) paused = true
+    }
+
+    fun resume() {
+        if (!paused) return
+        paused = false
+        val r = resumeAction
+        resumeAction = null
+        r?.invoke()
+    }
 
     /** Số thao tác đã thực hiện trong lần chạy gần nhất. */
     @Volatile
@@ -41,6 +62,9 @@ class AutoClickService : AccessibilityService() {
             return
         }
         running = true
+        paused = false
+        resumeAction = null
+        groupCounts = IntArray(list.size)
         generation++
         onFinished = onDone
         tapCount = 0
@@ -57,6 +81,8 @@ class AutoClickService : AccessibilityService() {
     fun stop() {
         val wasRunning = running
         running = false
+        paused = false
+        resumeAction = null
         generation++
         handler.removeCallbacksAndMessages(null)
         val cb = onFinished
@@ -66,6 +92,8 @@ class AutoClickService : AccessibilityService() {
 
     private fun finishRun() {
         running = false
+        paused = false
+        resumeAction = null
         generation++
         val cb = onFinished
         onFinished = null
@@ -74,8 +102,13 @@ class AutoClickService : AccessibilityService() {
 
     private fun step(gen: Int, list: List<ClickAction>, idx: Int, round: Int, loops: Int) {
         if (!running || gen != generation) return
+        if (paused) {
+            resumeAction = { step(gen, list, idx, round, loops) }
+            return
+        }
 
         if (idx >= list.size) {
+            groupCounts.fill(0)
             val done = round + 1
             if (loops > 0 && done >= loops) {
                 finishRun()
@@ -92,8 +125,19 @@ class AutoClickService : AccessibilityService() {
                 if (tapLimit > 0 && tapCount >= tapLimit) {
                     finishRun()
                 } else {
+                    var nextIdx = idx + 1
+                    // Nhóm lặp: nút này kết thúc nhóm bắt đầu từ nút groupFrom
+                    if (a.groupRepeat > 1 && a.groupFrom in 1..(idx + 1) && idx < groupCounts.size) {
+                        val c = groupCounts[idx] + 1
+                        if (c < a.groupRepeat) {
+                            groupCounts[idx] = c
+                            nextIdx = a.groupFrom - 1
+                        } else {
+                            groupCounts[idx] = 0
+                        }
+                    }
                     handler.postDelayed(
-                        { step(gen, list, idx + 1, round, loops) },
+                        { step(gen, list, nextIdx, round, loops) },
                         jitteredDelay(a.delayMs)
                     )
                 }
@@ -172,6 +216,17 @@ class AutoClickService : AccessibilityService() {
         stop()
         instance = null
         return super.onUnbind(intent)
+    }
+
+    /** Phím giảm âm lượng bật/dừng (chỉ khi người dùng bật tuỳ chọn và bảng nổi đang mở). */
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (!ClickStore.volumeHotkey) return false
+        val panel = FloatingService.instance ?: return false
+        if (event.keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) return false
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            handler.post { panel.toggleRun() }
+        }
+        return true
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
