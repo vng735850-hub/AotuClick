@@ -42,6 +42,7 @@ object ClickStore {
     val actions = mutableListOf<ClickAction>()
     var loops = 0            // 0 = lặp vô hạn
     var defaultDelay = 500L  // độ trễ mặc định cho nút mới
+    var panelAlpha = 90      // độ đậm bảng nổi (30..100)
 
     private const val PREF = "nvpklick"
     private var loaded = false
@@ -52,6 +53,7 @@ object ClickStore {
         val p = ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         loops = p.getInt("loops", 0)
         defaultDelay = p.getLong("defaultDelay", 500L)
+        panelAlpha = p.getInt("panelAlpha", 90).coerceIn(30, 100)
         actions.clear()
         try {
             val arr = JSONArray(p.getString("actions", "[]"))
@@ -95,6 +97,7 @@ object ClickStore {
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putInt("loops", loops)
             .putLong("defaultDelay", defaultDelay)
+            .putInt("panelAlpha", panelAlpha)
             .putString("actions", arr.toString())
             .apply()
     }
