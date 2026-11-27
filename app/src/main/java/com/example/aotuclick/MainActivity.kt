@@ -264,10 +264,10 @@ class MainActivity : Activity() {
             textView(
                 "1. Cấp 2 quyền ở trên (hiển thị trên ứng dụng khác và Trợ năng).\n" +
                     "2. Nhấn nút ▶ lớn để mở bảng điều khiển nổi.\n" +
-                    "3. Trên bảng nổi: ＋ thêm nút, － xoá nút cuối, ⚙ mở cài đặt, ✕ đóng.\n" +
+                    "3. Trên bảng nổi: ＋ thêm nút chạm, ➜ thêm nút kéo, － xoá nút cuối, ⚙ mở cài đặt, ˄ thu nhỏ thành bong bóng (chạm bong bóng để mở lại), ✕ đóng.\n" +
                     "4. Kéo từng nút số tới vị trí cần chạm. Chạm vào nút (không kéo) để chọn kiểu Chạm / Chạm đúp / Giữ / Kéo, chỉnh độ trễ, đổi thứ tự hoặc xoá.\n" +
                     "5. Kiểu Kéo có thêm chấm xanh ▸ là điểm kết thúc.\n" +
-                    "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng.",
+                    "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng. Ô số bên dưới nút ▶ hiện thời gian đã chạy (giờ:phút:giây).",
                 13f, cSub, false
             )
         )
