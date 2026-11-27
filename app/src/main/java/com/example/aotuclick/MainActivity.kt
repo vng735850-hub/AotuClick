@@ -225,8 +225,11 @@ class MainActivity : Activity() {
 
     @Suppress("DEPRECATION")
     private fun applySystemBars() {
-        window.statusBarColor = cBg
-        window.navigationBarColor = cBg
+        // Android < 6.0 không có biểu tượng thanh trạng thái màu tối → giữ thanh trạng thái tối
+        window.statusBarColor =
+            if (Build.VERSION.SDK_INT < 23 && !AppTheme.dark) Color.rgb(40, 40, 48) else cBg
+        window.navigationBarColor =
+            if (Build.VERSION.SDK_INT < 26 && !AppTheme.dark) Color.rgb(40, 40, 48) else cBg
         window.decorView.systemUiVisibility = if (AppTheme.dark) {
             0
         } else {
@@ -314,12 +317,7 @@ class MainActivity : Activity() {
 
         overlayDot = View(this)
         overlayBtn = pill("Cấp quyền", cBlue) {
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
+            Compat.overlayIntent(this)?.let { startActivity(it) }
         }
         permCard.addView(permRow("Hiển thị trên ứng dụng khác", overlayDot, overlayBtn))
 
@@ -699,27 +697,28 @@ class MainActivity : Activity() {
             Handler(Looper.getMainLooper()).postDelayed({ refreshStatus() }, 300L)
             return
         }
-        if (!Settings.canDrawOverlays(this)) {
+        if (!Compat.canDrawOverlays(this)) {
             Toast.makeText(this, "Hãy cấp quyền hiển thị trên ứng dụng khác trước", Toast.LENGTH_LONG).show()
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            )
+            Compat.overlayIntent(this)?.let { startActivity(it) }
             return
         }
-        startForegroundService(Intent(this, FloatingService::class.java))
+        if (!Compat.canGesture) {
+            Toast.makeText(
+                this,
+                "Android dưới 7.0 không hỗ trợ tự động chạm bằng Trợ năng. Bảng vẫn mở nhưng không chạm được.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+        Compat.startForegroundSvc(this, Intent(this, FloatingService::class.java))
         moveTaskToBack(true)
     }
 
     private fun refreshStatus() {
-        val overlayOk = Settings.canDrawOverlays(this)
+        val overlayOk = Compat.canDrawOverlays(this)
         val accOk = AutoClickService.instance != null
         overlayDot.background = ovalBg(if (overlayOk) cGreen else cRed)
         accDot.background = ovalBg(if (accOk) cGreen else cRed)
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        val batOk = pm.isIgnoringBatteryOptimizations(packageName)
+        val batOk = Compat.batteryOk(this)
         batDot.background = ovalBg(if (batOk) cGreen else cRed)
         batBtn.text = if (batOk) "Đã tắt" else "Mở"
         overlayBtn.text = if (overlayOk) "Đã cấp" else "Cấp quyền"
