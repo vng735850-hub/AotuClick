@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Nvp Klick</string>
-    <string name="service_desc">Cho ph\u00e9p Nvp Klick th\u1ef1c hi\u1ec7n thao t\u00e1c ch\u1ea1m, gi\u1eef, k\u00e9o t\u1ef1 \u0111\u1ed9ng tr\u00ean m\u00e0n h\u00ecnh.</string>
+<string name="app_name">Nvp Klick</string>
+<string name="service_desc">Cho ph\u00e9p Nvp Klick th\u1ef1c hi\u1ec7n thao t\u00e1c ch\u1ea1m, gi\u1eef, k\u00e9o t\u1ef1 \u0111\u1ed9ng tr\u00ean m\u00e0n h\u00ecnh.</string>
 </resources>
