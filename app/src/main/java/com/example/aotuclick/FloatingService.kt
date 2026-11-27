@@ -12,7 +12,10 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -20,6 +23,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 import kotlin.math.abs
 
 class FloatingService : Service() {
@@ -28,6 +32,8 @@ class FloatingService : Service() {
         @Volatile var instance: FloatingService? = null
         private const val CHANNEL_ID = "nvpklick_running"
         private const val NOTI_ID = 1
+        // 999 giờ 59 phút 59 giây
+        private const val MAX_SECONDS = 3_599_999L
     }
 
     /** Một nút trên màn hình: chấm bắt đầu (+ chấm kết thúc nếu là Kéo). */
@@ -43,10 +49,26 @@ class FloatingService : Service() {
     private var panelView: LinearLayout? = null
     private lateinit var panelLp: WindowManager.LayoutParams
     private lateinit var playBtn: IconView
+    private lateinit var timerText: TextView
+    private lateinit var bubbleView: IconView
+    private lateinit var bubbleLp: WindowManager.LayoutParams
     private val items = mutableListOf<Item>()
 
     private var running = false
     private var destroyed = false
+    private var minimized = false
+
+    // Bộ đếm thời gian chạy
+    private val handler = Handler(Looper.getMainLooper())
+    private var startTime = 0L
+    private var elapsedMs = 0L
+    private val ticker = object : Runnable {
+        override fun run() {
+            elapsedMs = SystemClock.elapsedRealtime() - startTime
+            showTimer()
+            if (running && !destroyed) handler.postDelayed(this, 200L)
+        }
+    }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private val markerSize get() = dp(52)
@@ -132,7 +154,7 @@ class FloatingService : Service() {
         val v = IconView(this, kind)
         v.background = ovalBg(bg)
         val lp = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
-        lp.setMargins(0, dp(4), 0, dp(4))
+        lp.setMargins(0, dp(3), 0, dp(3))
         v.layoutParams = lp
         v.setOnClickListener { onClick() }
         return v
@@ -143,13 +165,36 @@ class FloatingService : Service() {
 
         // Tay nắm kéo bảng
         val grip = IconView(this, IconKind.GRIP, Color.argb(210, 190, 196, 210))
-        grip.layoutParams = LinearLayout.LayoutParams(dp(44), dp(30))
+        grip.layoutParams = LinearLayout.LayoutParams(dp(44), dp(26))
 
         playBtn = circleButton(IconKind.PLAY, colGreen, 50) { toggle() }
-        val addBtn = circleButton(IconKind.PLUS, colBtn, 40) { addAction() }
-        val removeBtn = circleButton(IconKind.MINUS, colBtn, 40) { removeLastAction() }
-        val settingsBtn = circleButton(IconKind.GEAR, colBtn, 40) { openSettings() }
-        val closeBtn = circleButton(IconKind.CLOSE, Color.rgb(150, 50, 50), 40) { stopSelf() }
+
+        // Ô hiển thị thời gian chạy: 000:00:00
+        timerText = TextView(this)
+        timerText.setTextColor(Color.WHITE)
+        timerText.textSize = 10f
+        timerText.typeface = Typeface.MONOSPACE
+        timerText.gravity = Gravity.CENTER
+        timerText.setPadding(dp(6), dp(2), dp(6), dp(2))
+        val tbg = GradientDrawable()
+        tbg.shape = GradientDrawable.RECTANGLE
+        tbg.cornerRadius = dp(8).toFloat()
+        tbg.setColor(Color.rgb(38, 42, 54))
+        timerText.background = tbg
+        val tlp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        tlp.setMargins(0, dp(2), 0, dp(4))
+        timerText.layoutParams = tlp
+        showTimer()
+
+        val addBtn = circleButton(IconKind.PLUS, colBtn, 36) { addAction(ActionType.TAP) }
+        val swipeBtn = circleButton(IconKind.SWIPE, colBtn, 36) { addAction(ActionType.SWIPE) }
+        val removeBtn = circleButton(IconKind.MINUS, colBtn, 36) { removeLastAction() }
+        val settingsBtn = circleButton(IconKind.GEAR, colBtn, 36) { openSettings() }
+        val minBtn = circleButton(IconKind.COLLAPSE, colBtn, 36) { minimize() }
+        val closeBtn = circleButton(IconKind.CLOSE, Color.rgb(150, 50, 50), 36) { stopSelf() }
 
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
@@ -165,21 +210,70 @@ class FloatingService : Service() {
         panel.alpha = ClickStore.panelAlpha / 100f
         panel.addView(grip)
         panel.addView(playBtn)
+        panel.addView(timerText)
         panel.addView(addBtn)
+        panel.addView(swipeBtn)
         panel.addView(removeBtn)
         panel.addView(settingsBtn)
+        panel.addView(minBtn)
         panel.addView(closeBtn)
 
         panelLp = overlayParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            dp(8), dp(120)
+            dp(8), dp(100)
         )
         attachTouch(grip, panelLp, panel, null, null)
         wm.addView(panel, panelLp)
         panelView = panel
 
+        // Bong bóng khi thu nhỏ: kéo để di chuyển, chạm để mở lại bảng
+        bubbleView = IconView(this, IconKind.LOGO)
+        bubbleView.background = ovalBg(colGreen)
+        bubbleLp = overlayParams(dp(48), dp(48), dp(8), dp(100))
+        attachTouch(bubbleView, bubbleLp, bubbleView, null, { expand() })
+
         rebuildMarkers()
+    }
+
+    // ---------- Thu nhỏ / mở rộng ----------
+
+    private fun updateBubbleColor() {
+        bubbleView.background = ovalBg(if (running) colRed else colGreen)
+    }
+
+    private fun minimize() {
+        val p = panelView ?: return
+        if (minimized) return
+        minimized = true
+        bubbleLp.x = panelLp.x
+        bubbleLp.y = panelLp.y
+        updateBubbleColor()
+        try { wm.removeView(p) } catch (e: Exception) {}
+        try { wm.addView(bubbleView, bubbleLp) } catch (e: Exception) {}
+    }
+
+    private fun expand() {
+        val p = panelView ?: return
+        if (!minimized) return
+        minimized = false
+        val dm = resources.displayMetrics
+        val maxX = (dm.widthPixels - p.width).coerceAtLeast(0)
+        val maxY = (dm.heightPixels - p.height).coerceAtLeast(0)
+        panelLp.x = bubbleLp.x.coerceIn(0, maxX)
+        panelLp.y = bubbleLp.y.coerceIn(0, maxY)
+        try { wm.removeView(bubbleView) } catch (e: Exception) {}
+        try { wm.addView(p, panelLp) } catch (e: Exception) {}
+    }
+
+    // ---------- Bộ đếm thời gian ----------
+
+    private fun showTimer() {
+        val totalSec = (elapsedMs / 1000L).coerceIn(0L, MAX_SECONDS)
+        val h = totalSec / 3600L
+        val m = (totalSec % 3600L) / 60L
+        val s = totalSec % 60L
+        timerText.text = String.format(Locale.US, "%03d:%02d:%02d", h, m, s)
     }
 
     // ---------- Các nút đánh số ----------
@@ -249,25 +343,33 @@ class FloatingService : Service() {
         items.add(Item(a, view, lp, endView, endLp))
     }
 
-    private fun addAction() {
+    /** Thêm một nút mới: Chạm (TAP) hoặc Kéo (SWIPE, có chấm bắt đầu và chấm kết thúc). */
+    private fun addAction(type: ActionType) {
         if (running) {
             Toast.makeText(this, "Hãy dừng trước khi thêm nút", Toast.LENGTH_SHORT).show()
             return
         }
         val dm = resources.displayMetrics
         val n = ClickStore.actions.size
-        val x = (dm.widthPixels / 2f + (n % 6) * dp(14)).coerceIn(dp(30).toFloat(), (dm.widthPixels - dp(30)).toFloat())
-        val y = (dm.heightPixels / 2f + (n % 6) * dp(14)).coerceIn(dp(30).toFloat(), (dm.heightPixels - dp(30)).toFloat())
+        val minC = dp(30).toFloat()
+        val maxX = (dm.widthPixels - dp(30)).toFloat()
+        val maxY = (dm.heightPixels - dp(30)).toFloat()
+        val x = (dm.widthPixels / 2f + (n % 6) * dp(14)).coerceIn(minC, maxX)
+        val y = (dm.heightPixels / 2f + (n % 6) * dp(14)).coerceIn(minC, maxY)
+        val x2 = if (x + dp(140) <= maxX) x + dp(140) else (x - dp(140)).coerceAtLeast(minC)
         val a = ClickAction(
-            type = ActionType.TAP,
+            type = type,
             x = x, y = y,
-            x2 = (x + dp(140)).coerceAtMost((dm.widthPixels - dp(30)).toFloat()),
+            x2 = x2,
             y2 = y,
             delayMs = ClickStore.defaultDelay
         )
         ClickStore.actions.add(a)
         ClickStore.save(this)
         addMarker(ClickStore.actions.size - 1, a)
+        if (type == ActionType.SWIPE) {
+            Toast.makeText(this, "Kéo chấm xanh ▸ tới nơi cần thả", Toast.LENGTH_SHORT).show()
+        }
     }
 
     /** Xoá nút cuối cùng trong danh sách. */
@@ -345,11 +447,27 @@ class FloatingService : Service() {
     // ---------- Chạy / dừng ----------
 
     private fun setRunningUi(r: Boolean) {
+        val was = running
         running = r
         if (destroyed) return
+
+        // Bộ đếm: bắt đầu từ 000:00:00 mỗi lần chạy, giữ nguyên số khi dừng
+        handler.removeCallbacks(ticker)
+        if (r) {
+            if (!was) {
+                startTime = SystemClock.elapsedRealtime()
+                elapsedMs = 0L
+            }
+            handler.post(ticker)
+        } else if (was) {
+            elapsedMs = SystemClock.elapsedRealtime() - startTime
+            showTimer()
+        }
+
         playBtn.kind = if (r) IconKind.PAUSE else IconKind.PLAY
         playBtn.background = ovalBg(if (r) colRed else colGreen)
         playBtn.invalidate()
+        updateBubbleColor()
         items.forEach { item ->
             setTouchable(item.view, item.lp, !r)
             val ev = item.endView
@@ -405,9 +523,13 @@ class FloatingService : Service() {
     override fun onDestroy() {
         AutoClickService.instance?.stop()
         destroyed = true
+        handler.removeCallbacks(ticker)
         instance = null
         clearMarkers()
         panelView?.let { try { wm.removeView(it) } catch (e: Exception) {} }
+        if (::bubbleView.isInitialized) {
+            try { wm.removeView(bubbleView) } catch (e: Exception) {}
+        }
         panelView = null
         super.onDestroy()
     }
