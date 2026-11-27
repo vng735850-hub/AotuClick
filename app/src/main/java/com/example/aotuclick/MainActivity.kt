@@ -291,6 +291,19 @@ class MainActivity : Activity() {
         startLabel.gravity = Gravity.CENTER
         startCard.addView(startBtn)
         startCard.addView(startLabel)
+
+        // Chọn kiểu bảng điều khiển
+        val modeTitle = textView("KIỂU BẢNG ĐIỀU KHIỂN", 12f, cSub, true)
+        modeTitle.setPadding(0, dp(14), 0, 0)
+        startCard.addView(modeTitle)
+        val modeRow = LinearLayout(this)
+        modeRow.orientation = LinearLayout.HORIZONTAL
+        mode1Btn = weightPill("Kiểu 1\nMột điểm chạm", cGray) { setPanelMode(1) }
+        mode2Btn = weightPill("Kiểu 2\nNhiều điểm: di chuyển + chạm", cGray) { setPanelMode(2) }
+        modeRow.addView(mode1Btn)
+        modeRow.addView(mode2Btn)
+        startCard.addView(modeRow)
+        updateModeUi()
         root.addView(startCard)
 
         // Thẻ quyền
@@ -642,6 +655,23 @@ class MainActivity : Activity() {
     }
 
     // ---------- Xử lý ----------
+
+    private lateinit var mode1Btn: TextView
+    private lateinit var mode2Btn: TextView
+
+    private fun updateModeUi() {
+        val m = ClickStore.panelMode
+        mode1Btn.background = roundBg(if (m == 1) cBlue else cGray, 18, 0, 0)
+        mode2Btn.background = roundBg(if (m == 2) cBlue else cGray, 18, 0, 0)
+    }
+
+    private fun setPanelMode(m: Int) {
+        if (ClickStore.panelMode == m) return
+        ClickStore.panelMode = m
+        ClickStore.save(this)
+        updateModeUi()
+        FloatingService.instance?.applyMode()
+    }
 
     private fun updateAlphaLabel() {
         alphaLabel.text = "Độ đậm bảng điều khiển nổi: ${ClickStore.panelAlpha}%"
