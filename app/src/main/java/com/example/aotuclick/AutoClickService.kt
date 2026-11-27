@@ -57,7 +57,13 @@ class AutoClickService : AccessibilityService() {
      */
     fun run(list: List<ClickAction>, loops: Int, maxMillis: Long, maxTaps: Int, onDone: () -> Unit) {
         stop()
-        if (list.isEmpty()) {
+        if (list.isEmpty() || !Compat.canGesture) {
+            // Android < 7.0 không có dispatchGesture → không thể chạm tự động
+            if (!Compat.canGesture) {
+                android.widget.Toast.makeText(
+                    this, "Cần Android 7.0 trở lên để tự động chạm", android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
             onDone()
             return
         }
