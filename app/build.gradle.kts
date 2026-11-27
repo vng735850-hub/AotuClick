@@ -9,26 +9,13 @@ android {
 
     defaultConfig {
         applicationId = "com.example.autoclick"
-        minSdk = 21
+        minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.2.2"
-    }
-    // Khoá ký cố định: mọi bản build (kể cả trên GitHub Actions) cùng một chữ ký,
-    // nên cài đè bản mới lên bản cũ được mà không bị "Ứng dụng chưa được cài đặt".
-    signingConfigs {
-        getByName("debug") {
-            storeFile = file("nvpklick.keystore")
-            storePassword = "nvpklick123"
-            keyAlias = "nvpklick"
-            keyPassword = "nvpklick123"
-        }
+        versionCode = 4
+        versionName = "1.2.1"
     }
     buildTypes {
-        release {
-            isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
-        }
+        release { isMinifyEnabled = false }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
