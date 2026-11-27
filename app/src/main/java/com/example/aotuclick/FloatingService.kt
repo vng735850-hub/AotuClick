@@ -58,6 +58,7 @@ class FloatingService : Service() {
     private lateinit var panelLp: WindowManager.LayoutParams
     private lateinit var playBtn: IconView
     private lateinit var pauseBtn: IconView
+    private var hideBtn: IconView? = null
     private lateinit var timerText: TextView
     private lateinit var bubbleView: IconView
     private lateinit var bubbleLp: WindowManager.LayoutParams
@@ -67,6 +68,10 @@ class FloatingService : Service() {
     private var destroyed = false
     private var minimized = false
     private var userQuit = false
+    private var markersHidden = false
+
+    /** Kiểu 1: một điểm chỉ chạm. Kiểu 2: nhiều điểm (di chuyển + chạm). */
+    private val single: Boolean get() = ClickStore.panelMode == 1
 
     // Kích thước màn hình lần cuối (để co giãn toạ độ khi xoay)
     private var lastW = 0
@@ -330,6 +335,8 @@ class FloatingService : Service() {
         showTimer()
 
         pauseBtn = circleButton(IconKind.PAUSE, AppTheme.panelBtn, 36) { togglePause() }
+        val hide = circleButton(if (markersHidden) IconKind.EYE_OFF else IconKind.EYE, AppTheme.panelBtn, 36) { toggleMarkersHidden() }
+        hideBtn = hide
         val addBtn = circleButton(IconKind.PLUS, AppTheme.panelBtn, 36) { addAction(ActionType.TAP) }
         val swipeBtn = circleButton(IconKind.SWIPE, AppTheme.panelBtn, 36) { addAction(ActionType.SWIPE) }
         val removeBtn = circleButton(IconKind.MINUS, AppTheme.panelBtn, 36) { removeLastAction() }
@@ -337,7 +344,7 @@ class FloatingService : Service() {
         val minBtn = circleButton(IconKind.COLLAPSE, AppTheme.panelBtn, 36) { minimize() }
         val closeBtn = circleButton(IconKind.CLOSE, Color.rgb(150, 50, 50), 36) { requestQuit() }
         toolBtns.clear()
-        toolBtns.addAll(listOf(pauseBtn, addBtn, swipeBtn, removeBtn, settingsBtn, minBtn))
+        toolBtns.addAll(listOf(pauseBtn, hide, addBtn, swipeBtn, removeBtn, settingsBtn, minBtn))
 
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
@@ -356,9 +363,12 @@ class FloatingService : Service() {
         panel.addView(playBtn)
         panel.addView(timerText)
         panel.addView(pauseBtn)
-        panel.addView(addBtn)
-        panel.addView(swipeBtn)
-        panel.addView(removeBtn)
+        panel.addView(hide)
+        if (!single) {
+            panel.addView(addBtn)
+            panel.addView(swipeBtn)
+            panel.addView(removeBtn)
+        }
         panel.addView(settingsBtn)
         panel.addView(minBtn)
         panel.addView(closeBtn)
@@ -444,7 +454,64 @@ class FloatingService : Service() {
 
     private fun rebuildMarkers() {
         clearMarkers()
-        ClickStore.actions.forEachIndexed { i, a -> addMarker(i, a) }
+        if (single) ensureSingle()
+        ClickStore.actions.forEachIndexed { i, a ->
+            if (!single || i == 0) addMarker(i, a)
+        }
+    }
+
+    /** Kiểu 1: luôn có đúng một điểm chạm (tạo nếu chưa có, ép về loại Chạm). */
+    private fun ensureSingle() {
+        val dm = resources.displayMetrics
+        if (ClickStore.actions.isEmpty()) {
+            ClickStore.actions.add(
+                ClickAction(
+                    type = ActionType.TAP,
+                    x = dm.widthPixels / 2f,
+                    y = dm.heightPixels / 2f,
+                    x2 = dm.widthPixels / 2f,
+                    y2 = dm.heightPixels / 2f,
+                    delayMs = ClickStore.defaultDelay
+                )
+            )
+        }
+        ClickStore.actions[0].type = ActionType.TAP
+        ClickStore.save(this)
+    }
+
+    /** Ẩn / hiện toàn bộ các nút trên màn hình (vẫn chạy bình thường khi đang ẩn). */
+    private fun toggleMarkersHidden() {
+        markersHidden = !markersHidden
+        applyMarkersVisibility()
+    }
+
+    private fun applyMarkersVisibility() {
+        val vis = if (markersHidden) View.INVISIBLE else View.VISIBLE
+        items.forEach {
+            it.view.visibility = vis
+            it.endView?.visibility = vis
+        }
+        hideBtn?.let {
+            it.kind = if (markersHidden) IconKind.EYE_OFF else IconKind.EYE
+            it.invalidate()
+        }
+    }
+
+    /** Đổi kiểu bảng điều khiển (gọi từ màn hình chính): dựng lại bảng, giữ nguyên vị trí. */
+    fun applyMode() {
+        if (destroyed || panelView == null) return
+        if (pendingStart) cancelCountdown()
+        if (running) {
+            AutoClickService.instance?.stop()
+            setRunningUi(false)
+        }
+        val wasMin = minimized
+        val cur = if (wasMin) bubbleLp else panelLp
+        panelX = cur.x
+        panelY = cur.y
+        teardownViews()
+        setup()
+        if (wasMin) minimize()
     }
 
     private fun makeCircle(label: String, color: Int, size: Int): TextView {
@@ -490,6 +557,10 @@ class FloatingService : Service() {
             endLp = elp
         }
         items.add(Item(a, view, lp, endView, endLp))
+        if (markersHidden) {
+            view.visibility = View.INVISIBLE
+            endView?.visibility = View.INVISIBLE
+        }
     }
 
     /** Thêm một nút mới: Chạm (TAP) hoặc Kéo (SWIPE, có chấm bắt đầu và chấm kết thúc). */
@@ -497,6 +568,10 @@ class FloatingService : Service() {
         if (running) {
             Toast.makeText(this, "Hãy dừng trước khi thêm nút", Toast.LENGTH_SHORT).show()
             return
+        }
+        if (markersHidden) {
+            markersHidden = false
+            applyMarkersVisibility()
         }
         val dm = resources.displayMetrics
         val n = ClickStore.actions.size
@@ -733,8 +808,13 @@ class FloatingService : Service() {
         }
         handler.removeCallbacks(countdownTick)
         setRunningUi(true)
+        val list = if (single) {
+            ClickStore.actions.take(1).map { it.copy(type = ActionType.TAP, groupFrom = 0, groupRepeat = 0) }
+        } else {
+            ClickStore.actions
+        }
         svc.run(
-            ClickStore.actions,
+            list,
             ClickStore.loops,
             ClickStore.stopMinutes * 60_000L,
             ClickStore.stopTaps
@@ -756,6 +836,7 @@ class FloatingService : Service() {
             setRunningUi(false) // phòng trường hợp callback không được gọi
             return
         }
+        if (single) ensureSingle()
         if (ClickStore.actions.isEmpty()) {
             Toast.makeText(this, "Chưa có nút nào. Nhấn ＋ để thêm", Toast.LENGTH_SHORT).show()
             return
