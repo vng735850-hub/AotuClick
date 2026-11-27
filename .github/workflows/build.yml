@@ -9,6 +9,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,15 +31,15 @@ jobs:
       - name: Find Gradle project
         id: proj
         run: |
-          echo "Repo layout:"
-          find . -maxdepth 3 -not -path './.git/*' | head -60
           f=$(find . -maxdepth 3 \( -name settings.gradle -o -name settings.gradle.kts \) -not -path './.git/*' | head -1)
           if [ -z "$f" ]; then
             echo "::error::Khong tim thay settings.gradle(.kts) trong repo"
             exit 1
           fi
-          echo "Project dir: $(dirname "$f")"
           echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+          echo "Project dir: $(dirname "$f")"
+          echo "--- Resource files ---"
+          find "$(dirname "$f")" -path '*/src/main/res*' | sort
 
       - name: Set up Gradle 8.9
         uses: gradle/actions/setup-gradle@v4
@@ -52,7 +55,12 @@ jobs:
       - name: Show errors
         if: failure()
         run: |
-          grep -n -E "^e: |error:|What went wrong|FAILURE|Execution failed|Could not|not found" -A4 build.log 2>/dev/null | head -80 || true
+          echo "=== Resource files ==="
+          find . -path '*/src/main/res*' -type f | sort
+          echo "=== What went wrong ==="
+          grep -n -E "^e: |What went wrong" -A4 build.log 2>/dev/null | head -40 || true
+          echo "=== Caused by ==="
+          grep -n -E "Caused by" -A10 build.log 2>/dev/null | head -80 || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
