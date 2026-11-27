@@ -80,7 +80,12 @@ class FloatingService : Service() {
 
     private val colGreen = Color.rgb(46, 160, 67)
     private val colRed = Color.rgb(211, 47, 47)
-    private val colBtn = Color.rgb(45, 55, 72)
+
+    // Các thành phần của bảng nổi cần đổi màu khi đổi chế độ sáng/tối
+    private var gripView: IconView? = null
+    private val toolBtns = mutableListOf<IconView>()
+    private var panelBgDrawable: GradientDrawable? = null
+    private var timerBgDrawable: GradientDrawable? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -106,6 +111,23 @@ class FloatingService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    /** Đổi màu bảng nổi theo chế độ sáng/tối hiện tại của app. */
+    fun applyTheme() {
+        if (destroyed || panelView == null) return
+        panelBgDrawable?.let {
+            it.setColor(AppTheme.panelBg)
+            it.setStroke(dp(1), AppTheme.panelStroke)
+        }
+        timerBgDrawable?.setColor(AppTheme.field)
+        timerText.setTextColor(AppTheme.text)
+        gripView?.let {
+            it.tint = AppTheme.gripTint
+            it.invalidate()
+        }
+        toolBtns.forEach { it.background = ovalBg(AppTheme.panelBtn) }
+        panelView?.invalidate()
     }
 
     /** Cập nhật độ đậm của bảng nổi theo cài đặt. */
@@ -190,14 +212,15 @@ class FloatingService : Service() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
         // Tay nắm kéo bảng
-        val grip = IconView(this, IconKind.GRIP, Color.argb(210, 190, 196, 210))
+        val grip = IconView(this, IconKind.GRIP, AppTheme.gripTint)
         grip.layoutParams = LinearLayout.LayoutParams(dp(44), dp(26))
+        gripView = grip
 
         playBtn = circleButton(IconKind.PLAY, colGreen, 50) { toggle() }
 
         // Ô hiển thị thời gian chạy: 000:00:00
         timerText = TextView(this)
-        timerText.setTextColor(Color.WHITE)
+        timerText.setTextColor(AppTheme.text)
         timerText.textSize = 10f
         timerText.typeface = Typeface.MONOSPACE
         timerText.gravity = Gravity.CENTER
@@ -205,8 +228,9 @@ class FloatingService : Service() {
         val tbg = GradientDrawable()
         tbg.shape = GradientDrawable.RECTANGLE
         tbg.cornerRadius = dp(8).toFloat()
-        tbg.setColor(Color.rgb(38, 42, 54))
+        tbg.setColor(AppTheme.field)
         timerText.background = tbg
+        timerBgDrawable = tbg
         val tlp = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
@@ -215,18 +239,21 @@ class FloatingService : Service() {
         timerText.layoutParams = tlp
         showTimer()
 
-        val addBtn = circleButton(IconKind.PLUS, colBtn, 36) { addAction(ActionType.TAP) }
-        val swipeBtn = circleButton(IconKind.SWIPE, colBtn, 36) { addAction(ActionType.SWIPE) }
-        val removeBtn = circleButton(IconKind.MINUS, colBtn, 36) { removeLastAction() }
-        val settingsBtn = circleButton(IconKind.GEAR, colBtn, 36) { openSettings() }
-        val minBtn = circleButton(IconKind.COLLAPSE, colBtn, 36) { minimize() }
+        val addBtn = circleButton(IconKind.PLUS, AppTheme.panelBtn, 36) { addAction(ActionType.TAP) }
+        val swipeBtn = circleButton(IconKind.SWIPE, AppTheme.panelBtn, 36) { addAction(ActionType.SWIPE) }
+        val removeBtn = circleButton(IconKind.MINUS, AppTheme.panelBtn, 36) { removeLastAction() }
+        val settingsBtn = circleButton(IconKind.GEAR, AppTheme.panelBtn, 36) { openSettings() }
+        val minBtn = circleButton(IconKind.COLLAPSE, AppTheme.panelBtn, 36) { minimize() }
         val closeBtn = circleButton(IconKind.CLOSE, Color.rgb(150, 50, 50), 36) { stopSelf() }
+        toolBtns.clear()
+        toolBtns.addAll(listOf(addBtn, swipeBtn, removeBtn, settingsBtn, minBtn))
 
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
         bg.cornerRadius = dp(30).toFloat()
-        bg.setColor(Color.argb(240, 24, 27, 34))
-        bg.setStroke(dp(1), Color.argb(90, 255, 255, 255))
+        bg.setColor(AppTheme.panelBg)
+        bg.setStroke(dp(1), AppTheme.panelStroke)
+        panelBgDrawable = bg
 
         val panel = LinearLayout(this)
         panel.orientation = LinearLayout.VERTICAL
