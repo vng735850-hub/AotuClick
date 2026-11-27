@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.res.Configuration
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -24,6 +25,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Calendar
 import java.util.Locale
 import kotlin.math.abs
 
@@ -33,6 +35,8 @@ class FloatingService : Service() {
         @Volatile var instance: FloatingService? = null
         private const val CHANNEL_ID = "nvpklick_running"
         private const val NOTI_ID = 1
+        private const val ALERT_CHANNEL = "nvpklick_alert"
+        private const val ALERT_ID = 2
         private const val ACTION_STOP_RUN = "com.example.autoclick.STOP_RUN"
         private const val ACTION_SHOW = "com.example.autoclick.SHOW_PANEL"
         private const val ACTION_QUIT = "com.example.autoclick.QUIT"
@@ -53,6 +57,7 @@ class FloatingService : Service() {
     private var panelView: LinearLayout? = null
     private lateinit var panelLp: WindowManager.LayoutParams
     private lateinit var playBtn: IconView
+    private lateinit var pauseBtn: IconView
     private lateinit var timerText: TextView
     private lateinit var bubbleView: IconView
     private lateinit var bubbleLp: WindowManager.LayoutParams
@@ -61,6 +66,18 @@ class FloatingService : Service() {
     private var running = false
     private var destroyed = false
     private var minimized = false
+    private var userQuit = false
+
+    // Kích thước màn hình lần cuối (để co giãn toạ độ khi xoay)
+    private var lastW = 0
+    private var lastH = 0
+    private var panelX = -1
+    private var panelY = -1
+
+    // Hẹn giờ / đếm ngược trước khi chạy
+    private var pendingStart = false
+    private var countdownEnd = 0L
+    private var lastTick = 0L
 
     // Bộ đếm thời gian chạy
     private val handler = Handler(Looper.getMainLooper())
@@ -68,7 +85,11 @@ class FloatingService : Service() {
     private var elapsedMs = 0L
     private val ticker = object : Runnable {
         override fun run() {
-            elapsedMs = SystemClock.elapsedRealtime() - startTime
+            val now = SystemClock.elapsedRealtime()
+            // Đang tạm dừng thì không tính thời gian
+            if (AutoClickService.instance?.isPaused == true) startTime += now - lastTick
+            lastTick = now
+            elapsedMs = now - startTime
             showTimer()
             if (running && !destroyed) handler.postDelayed(this, 200L)
         }
@@ -92,15 +113,22 @@ class FloatingService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        val dm = resources.displayMetrics
+        lastW = dm.widthPixels
+        lastH = dm.heightPixels
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
         ClickStore.ensureLoaded(this)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ALERT_ID)
         when (intent?.action) {
-            ACTION_STOP_RUN -> AutoClickService.instance?.stop()
+            ACTION_STOP_RUN -> {
+                if (pendingStart) cancelCountdown()
+                AutoClickService.instance?.stop()
+            }
             ACTION_SHOW -> expand()
-            ACTION_QUIT -> stopSelf()
+            ACTION_QUIT -> requestQuit()
             else -> {
                 if (panelView == null) {
                     setup()
@@ -110,7 +138,58 @@ class FloatingService : Service() {
                 }
             }
         }
-        return START_NOT_STICKY
+        // STICKY: nếu hệ thống dọn bộ nhớ và tắt dịch vụ, Android sẽ dựng lại bảng nổi
+        return START_STICKY
+    }
+
+    /** Người dùng chủ động tắt: không hiện cảnh báo "bảng đã tắt". */
+    fun requestQuit() {
+        userQuit = true
+        stopSelf()
+    }
+
+    /** Bật/dừng chạy từ bên ngoài (phím âm lượng, ô cài đặt nhanh). */
+    fun toggleRun() {
+        if (destroyed || panelView == null) return
+        toggle()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (destroyed || panelView == null) return
+        val dm = resources.displayMetrics
+        val nw = dm.widthPixels
+        val nh = dm.heightPixels
+        if (lastW <= 0 || lastH <= 0 || (nw == lastW && nh == lastH)) return
+
+        if (pendingStart) cancelCountdown()
+        if (running) {
+            AutoClickService.instance?.stop()
+            setRunningUi(false)
+        }
+        val wasMin = minimized
+        val cur = if (wasMin) bubbleLp else panelLp
+        panelX = (cur.x.toLong() * nw / lastW).toInt().coerceIn(0, (nw - dp(48)).coerceAtLeast(0))
+        panelY = (cur.y.toLong() * nh / lastH).toInt().coerceIn(0, (nh - dp(48)).coerceAtLeast(0))
+
+        ClickStore.rescale(lastW, lastH, nw, nh)
+        lastW = nw
+        lastH = nh
+        ClickStore.save(this)
+
+        teardownViews()
+        setup()
+        if (wasMin) minimize()
+    }
+
+    private fun teardownViews() {
+        clearMarkers()
+        panelView?.let { try { wm.removeView(it) } catch (e: Exception) {} }
+        if (::bubbleView.isInitialized) {
+            try { wm.removeView(bubbleView) } catch (e: Exception) {}
+        }
+        panelView = null
+        minimized = false
     }
 
     /** Đổi màu bảng nổi theo chế độ sáng/tối hiện tại của app. */
@@ -186,6 +265,11 @@ class FloatingService : Service() {
             PixelFormat.TRANSLUCENT
         )
         lp.gravity = Gravity.TOP or Gravity.START
+        if (Build.VERSION.SDK_INT >= 28) {
+            // Tai thỏ / đục lỗ: cho phép cửa sổ nổi đi tới sát mép, không bị cắt hoặc đẩy lệch
+            lp.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         lp.x = px
         lp.y = py
         return lp
@@ -202,7 +286,7 @@ class FloatingService : Service() {
         val v = IconView(this, kind)
         v.background = ovalBg(bg)
         val lp = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
-        lp.setMargins(0, dp(3), 0, dp(3))
+        lp.setMargins(dp(3), dp(3), dp(3), dp(3))
         v.layoutParams = lp
         v.setOnClickListener { onClick() }
         return v
@@ -210,10 +294,16 @@ class FloatingService : Service() {
 
     private fun setup() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        // Xoay ngang: bảng nằm ngang cho vừa chiều cao màn hình
+        val horiz = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
         // Tay nắm kéo bảng
         val grip = IconView(this, IconKind.GRIP, AppTheme.gripTint)
-        grip.layoutParams = LinearLayout.LayoutParams(dp(44), dp(26))
+        grip.layoutParams = if (horiz) {
+            LinearLayout.LayoutParams(dp(26), dp(44))
+        } else {
+            LinearLayout.LayoutParams(dp(44), dp(26))
+        }
         gripView = grip
 
         playBtn = circleButton(IconKind.PLAY, colGreen, 50) { toggle() }
@@ -239,14 +329,15 @@ class FloatingService : Service() {
         timerText.layoutParams = tlp
         showTimer()
 
+        pauseBtn = circleButton(IconKind.PAUSE, AppTheme.panelBtn, 36) { togglePause() }
         val addBtn = circleButton(IconKind.PLUS, AppTheme.panelBtn, 36) { addAction(ActionType.TAP) }
         val swipeBtn = circleButton(IconKind.SWIPE, AppTheme.panelBtn, 36) { addAction(ActionType.SWIPE) }
         val removeBtn = circleButton(IconKind.MINUS, AppTheme.panelBtn, 36) { removeLastAction() }
         val settingsBtn = circleButton(IconKind.GEAR, AppTheme.panelBtn, 36) { openSettings() }
         val minBtn = circleButton(IconKind.COLLAPSE, AppTheme.panelBtn, 36) { minimize() }
-        val closeBtn = circleButton(IconKind.CLOSE, Color.rgb(150, 50, 50), 36) { stopSelf() }
+        val closeBtn = circleButton(IconKind.CLOSE, Color.rgb(150, 50, 50), 36) { requestQuit() }
         toolBtns.clear()
-        toolBtns.addAll(listOf(addBtn, swipeBtn, removeBtn, settingsBtn, minBtn))
+        toolBtns.addAll(listOf(pauseBtn, addBtn, swipeBtn, removeBtn, settingsBtn, minBtn))
 
         val bg = GradientDrawable()
         bg.shape = GradientDrawable.RECTANGLE
@@ -256,14 +347,15 @@ class FloatingService : Service() {
         panelBgDrawable = bg
 
         val panel = LinearLayout(this)
-        panel.orientation = LinearLayout.VERTICAL
-        panel.gravity = Gravity.CENTER_HORIZONTAL
+        panel.orientation = if (horiz) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+        panel.gravity = if (horiz) Gravity.CENTER_VERTICAL else Gravity.CENTER_HORIZONTAL
         panel.setPadding(dp(6), dp(4), dp(6), dp(6))
         panel.background = bg
         panel.alpha = ClickStore.panelAlpha / 100f
         panel.addView(grip)
         panel.addView(playBtn)
         panel.addView(timerText)
+        panel.addView(pauseBtn)
         panel.addView(addBtn)
         panel.addView(swipeBtn)
         panel.addView(removeBtn)
@@ -274,7 +366,8 @@ class FloatingService : Service() {
         panelLp = overlayParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            dp(8), dp(100)
+            if (panelX >= 0) panelX else dp(8),
+            if (panelY >= 0) panelY else dp(100)
         )
         attachTouch(grip, panelLp, panel, null, null)
         wm.addView(panel, panelLp)
@@ -287,6 +380,7 @@ class FloatingService : Service() {
         attachTouch(bubbleView, bubbleLp, bubbleView, null, { expand() })
 
         rebuildMarkers()
+        setRunningUi(running)
     }
 
     // ---------- Thu nhỏ / mở rộng ----------
@@ -335,6 +429,7 @@ class FloatingService : Service() {
     /** Vẽ lại toàn bộ nút từ ClickStore (gọi sau khi sửa / xoá / đổi thứ tự). */
     fun refresh() {
         if (destroyed || panelView == null) return
+        if (pendingStart) cancelCountdown()
         if (running) AutoClickService.instance?.stop()
         rebuildMarkers()
     }
@@ -510,6 +605,7 @@ class FloatingService : Service() {
         if (r) {
             if (!was) {
                 startTime = SystemClock.elapsedRealtime()
+                lastTick = startTime
                 elapsedMs = 0L
             }
             handler.post(ticker)
@@ -518,16 +614,48 @@ class FloatingService : Service() {
             showTimer()
         }
 
-        playBtn.kind = if (r) IconKind.PAUSE else IconKind.PLAY
+        playBtn.kind = if (r) IconKind.STOP else IconKind.PLAY
         playBtn.background = ovalBg(if (r) colRed else colGreen)
         playBtn.invalidate()
+        if (!r) {
+            pauseBtn.kind = IconKind.PAUSE
+            pauseBtn.invalidate()
+        }
         updateBubbleColor()
+        setKeepOn(r)
+        setMarkersTouchable(!r)
+    }
+
+    private fun setMarkersTouchable(touchable: Boolean) {
         items.forEach { item ->
-            setTouchable(item.view, item.lp, !r)
+            setTouchable(item.view, item.lp, touchable)
             val ev = item.endView
             val elp = item.endLp
-            if (ev != null && elp != null) setTouchable(ev, elp, !r)
+            if (ev != null && elp != null) setTouchable(ev, elp, touchable)
         }
+    }
+
+    /** Giữ màn hình sáng khi đang chạy hoặc đang chờ hẹn giờ (không cần quyền WakeLock). */
+    private fun setKeepOn(on: Boolean) {
+        if (panelView == null) return
+        val flag = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        panelLp.flags = if (on) panelLp.flags or flag else panelLp.flags and flag.inv()
+        bubbleLp.flags = if (on) bubbleLp.flags or flag else bubbleLp.flags and flag.inv()
+        try {
+            if (minimized) wm.updateViewLayout(bubbleView, bubbleLp)
+            else panelView?.let { wm.updateViewLayout(it, panelLp) }
+        } catch (e: Exception) {}
+    }
+
+    private fun togglePause() {
+        val svc = AutoClickService.instance
+        if (!running || svc == null) {
+            Toast.makeText(this, "Chỉ tạm dừng được khi đang chạy", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (svc.isPaused) svc.resume() else svc.pause()
+        pauseBtn.kind = if (svc.isPaused) IconKind.PLAY else IconKind.PAUSE
+        pauseBtn.invalidate()
     }
 
     private fun setTouchable(v: View, lp: WindowManager.LayoutParams, touchable: Boolean) {
@@ -539,7 +667,85 @@ class FloatingService : Service() {
         try { wm.updateViewLayout(v, lp) } catch (e: Exception) {}
     }
 
+    // ---------- Hẹn giờ / đếm ngược ----------
+
+    /** Thời gian chờ trước khi chạy: hẹn giờ HH:mm[:ss] nếu có, nếu không thì đếm ngược. */
+    private fun startDelayMs(): Long {
+        val t = ClickStore.startAt.trim()
+        if (t.isNotEmpty()) {
+            val p = t.split(":")
+            val h = p.getOrNull(0)?.trim()?.toIntOrNull()
+            val m = p.getOrNull(1)?.trim()?.toIntOrNull() ?: 0
+            val sec = p.getOrNull(2)?.trim()?.toIntOrNull() ?: 0
+            if (h != null && h in 0..23 && m in 0..59 && sec in 0..59) {
+                val c = Calendar.getInstance()
+                val now = c.timeInMillis
+                c.set(Calendar.HOUR_OF_DAY, h)
+                c.set(Calendar.MINUTE, m)
+                c.set(Calendar.SECOND, sec)
+                c.set(Calendar.MILLISECOND, 0)
+                if (c.timeInMillis <= now) c.add(Calendar.DAY_OF_MONTH, 1)
+                return c.timeInMillis - now
+            }
+        }
+        return ClickStore.startDelaySec * 1000L
+    }
+
+    private val countdownTick = object : Runnable {
+        override fun run() {
+            if (!pendingStart || destroyed) return
+            val left = countdownEnd - SystemClock.elapsedRealtime()
+            if (left <= 0L) {
+                pendingStart = false
+                startRunNow()
+                return
+            }
+            val sec = (left + 999L) / 1000L
+            timerText.text = String.format(
+                Locale.US, "Chờ\n%02d:%02d:%02d", sec / 3600L, (sec % 3600L) / 60L, sec % 60L
+            )
+            handler.postDelayed(this, 200L)
+        }
+    }
+
+    private fun setPendingUi(p: Boolean) {
+        playBtn.kind = if (p) IconKind.STOP else IconKind.PLAY
+        playBtn.background = ovalBg(if (p) colRed else colGreen)
+        playBtn.invalidate()
+        setKeepOn(p)
+        setMarkersTouchable(!p)
+    }
+
+    private fun cancelCountdown() {
+        pendingStart = false
+        handler.removeCallbacks(countdownTick)
+        setPendingUi(false)
+        showTimer()
+    }
+
+    private fun startRunNow() {
+        val svc = AutoClickService.instance
+        if (svc == null) {
+            setPendingUi(false)
+            showTimer()
+            Toast.makeText(this, "Dịch vụ Trợ năng chưa bật", Toast.LENGTH_LONG).show()
+            return
+        }
+        handler.removeCallbacks(countdownTick)
+        setRunningUi(true)
+        svc.run(
+            ClickStore.actions,
+            ClickStore.loops,
+            ClickStore.stopMinutes * 60_000L,
+            ClickStore.stopTaps
+        ) { setRunningUi(false) }
+    }
+
     private fun toggle() {
+        if (pendingStart) {
+            cancelCountdown()
+            return
+        }
         val svc = AutoClickService.instance
         if (svc == null) {
             Toast.makeText(this, "Hãy bật dịch vụ Trợ năng Nvp Klick trước", Toast.LENGTH_LONG).show()
@@ -570,19 +776,45 @@ class FloatingService : Service() {
         }
         ClickStore.save(this)
 
-        setRunningUi(true)
-        svc.run(
-            ClickStore.actions,
-            ClickStore.loops,
-            ClickStore.stopMinutes * 60_000L,
-            ClickStore.stopTaps
-        ) { setRunningUi(false) }
+        val delay = startDelayMs()
+        if (delay > 0L) {
+            pendingStart = true
+            countdownEnd = SystemClock.elapsedRealtime() + delay
+            setPendingUi(true)
+            handler.post(countdownTick)
+        } else {
+            startRunNow()
+        }
+    }
+
+    private fun postStoppedNotice() {
+        try {
+            val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            nm.createNotificationChannel(
+                NotificationChannel(ALERT_CHANNEL, "Nvp Klick - cảnh báo", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+            val pi = PendingIntent.getActivity(
+                this, 4, Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val n = Notification.Builder(this, ALERT_CHANNEL)
+                .setContentTitle("Bảng điều khiển đã tắt")
+                .setContentText("Nvp Klick đã bị dừng. Chạm để mở lại.")
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(ALERT_ID, n)
+        } catch (e: Exception) {
+        }
     }
 
     override fun onDestroy() {
         AutoClickService.instance?.stop()
         destroyed = true
         handler.removeCallbacks(ticker)
+        handler.removeCallbacks(countdownTick)
+        if (!userQuit) postStoppedNotice()
         instance = null
         clearMarkers()
         panelView?.let { try { wm.removeView(it) } catch (e: Exception) {} }
