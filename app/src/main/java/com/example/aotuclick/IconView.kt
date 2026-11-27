@@ -10,7 +10,7 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
-enum class IconKind { PLAY, PAUSE, STOP, PLUS, MINUS, GEAR, CLOSE, GRIP }
+enum class IconKind { PLAY, PAUSE, STOP, PLUS, MINUS, GEAR, CLOSE, GRIP, COLLAPSE, SWIPE, LOGO }
 
 /** Biểu tượng vẽ hoàn toàn bằng code, không cần file ảnh hay tài nguyên. */
 class IconView(
@@ -29,6 +29,7 @@ class IconView(
         val s = min(width, height) * 0.5f * 0.6f
         paint.color = tint
         paint.strokeCap = Paint.Cap.ROUND
+        paint.strokeJoin = Paint.Join.ROUND
         paint.strokeWidth = s * 0.28f
 
         when (kind) {
@@ -78,6 +79,30 @@ class IconView(
                         paint
                     )
                 }
+            }
+            IconKind.COLLAPSE -> {
+                paint.style = Paint.Style.STROKE
+                path.reset()
+                path.moveTo(cx - s * 0.6f, cy + s * 0.3f)
+                path.lineTo(cx, cy - s * 0.3f)
+                path.lineTo(cx + s * 0.6f, cy + s * 0.3f)
+                canvas.drawPath(path, paint)
+            }
+            IconKind.SWIPE -> {
+                paint.style = Paint.Style.STROKE
+                canvas.drawLine(cx - s * 0.7f, cy, cx + s * 0.7f, cy, paint)
+                path.reset()
+                path.moveTo(cx + s * 0.2f, cy - s * 0.5f)
+                path.lineTo(cx + s * 0.7f, cy)
+                path.lineTo(cx + s * 0.2f, cy + s * 0.5f)
+                canvas.drawPath(path, paint)
+            }
+            IconKind.LOGO -> {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = s * 0.2f
+                canvas.drawCircle(cx, cy, s * 0.6f, paint)
+                paint.style = Paint.Style.FILL
+                canvas.drawCircle(cx, cy, s * 0.22f, paint)
             }
             IconKind.GRIP -> {
                 paint.style = Paint.Style.FILL
