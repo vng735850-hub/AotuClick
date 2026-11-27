@@ -1,4 +1,5 @@
 package com.example.autoclick
+import android.os.Build.VERSION.SDK_INT
 
 import android.app.PendingIntent
 import android.content.Context
