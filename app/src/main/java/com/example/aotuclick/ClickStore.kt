@@ -61,6 +61,7 @@ object ClickStore {
     var panelAlpha = 90      // độ đậm bảng nổi (30..100)
     var jitterDelayPct = 0   // ngẫu nhiên độ trễ ± % (0 = tắt)
     var jitterPx = 0         // lệch vị trí ngẫu nhiên ± px (0 = tắt)
+    var darkMode = true      // chế độ tối (true) / sáng (false) của app và bảng nổi
 
     private const val PREF = "nvpklick"
     private var loaded = false
@@ -170,6 +171,7 @@ object ClickStore {
         panelAlpha = p.getInt("panelAlpha", 90).coerceIn(30, 100)
         jitterDelayPct = p.getInt("jitterDelayPct", 0).coerceIn(0, 100)
         jitterPx = p.getInt("jitterPx", 0).coerceIn(0, 100)
+        darkMode = p.getBoolean("darkMode", true)
 
         profiles.clear()
         activeIndex = 0
@@ -223,6 +225,7 @@ object ClickStore {
             .putInt("panelAlpha", panelAlpha)
             .putInt("jitterDelayPct", jitterDelayPct)
             .putInt("jitterPx", jitterPx)
+            .putBoolean("darkMode", darkMode)
             .putString("profiles", arr.toString())
             .putInt("active", activeIndex)
             .apply()
