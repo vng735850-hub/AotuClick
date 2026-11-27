@@ -13,11 +13,13 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -27,6 +29,11 @@ import android.widget.TextView
 import android.widget.Toast
 
 class MainActivity : Activity() {
+
+    companion object {
+        private const val REQ_EXPORT = 101
+        private const val REQ_IMPORT = 102
+    }
 
     // Màu nền/chữ đổi theo chế độ sáng/tối (AppTheme); màu nút giữ cố định
     private val cBg: Int get() = AppTheme.bg
@@ -49,6 +56,11 @@ class MainActivity : Activity() {
     private lateinit var accDot: View
     private lateinit var overlayBtn: TextView
     private lateinit var accBtn: TextView
+    private lateinit var batDot: View
+    private lateinit var batBtn: TextView
+    private lateinit var undoBtn: TextView
+    private lateinit var startDelayInput: EditText
+    private lateinit var startAtInput: EditText
     private lateinit var profileName: TextView
     private lateinit var profileInfo: TextView
     private lateinit var loopsInput: EditText
@@ -138,6 +150,14 @@ class MainActivity : Activity() {
         )
         lp.setMargins(0, dp(4), 0, 0)
         e.layoutParams = lp
+        return e
+    }
+
+    private fun textInput(value: String, hint: String): EditText {
+        val e = numberInput(value)
+        e.inputType = InputType.TYPE_CLASS_DATETIME or InputType.TYPE_DATETIME_VARIATION_TIME
+        e.hint = hint
+        e.setHintTextColor(cSub)
         return e
     }
 
@@ -295,6 +315,22 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         permCard.addView(permRow("Dịch vụ Trợ năng (Accessibility)", accDot, accBtn))
+
+        batDot = View(this)
+        batBtn = pill("Mở", cBlue) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (e: Exception) {
+                Toast.makeText(this@MainActivity, "Máy không mở được màn hình này", Toast.LENGTH_SHORT).show()
+            }
+        }
+        permCard.addView(permRow("Không tối ưu pin (chạy nền lâu)", batDot, batBtn))
+        permCard.addView(
+            textView(
+                "Chạy nền lâu: chọn \"Không tối ưu\" cho Nvp Klick. Máy Xiaomi/Oppo/Vivo/Samsung: vào Cài đặt > Pin > Ứng dụng này, bật \"Tự khởi chạy\" và \"Không hạn chế nền\".",
+                12f, cSub, false
+            )
+        )
         root.addView(permCard)
 
         // Thẻ kịch bản
@@ -317,7 +353,19 @@ class MainActivity : Activity() {
         rowB.orientation = LinearLayout.HORIZONTAL
         rowB.addView(weightPill("Đổi tên", cGray) { renameProfile() })
         rowB.addView(weightPill("Xoá", cRed) { deleteProfile() })
+        undoBtn = weightPill("Hoàn tác", cBlue) {
+            ClickStore.undo()
+            afterProfileChange()
+            Toast.makeText(this@MainActivity, "Đã hoàn tác", Toast.LENGTH_SHORT).show()
+        }
+        rowB.addView(undoBtn)
         profCard.addView(rowB)
+
+        val rowC = LinearLayout(this)
+        rowC.orientation = LinearLayout.HORIZONTAL
+        rowC.addView(weightPill("Xuất file JSON", cGray) { exportProfiles() })
+        rowC.addView(weightPill("Nhập file JSON", cGray) { importProfiles() })
+        profCard.addView(rowC)
         root.addView(profCard)
 
         // Thẻ cài đặt
@@ -339,6 +387,24 @@ class MainActivity : Activity() {
         addLabeled(setCard, "Ngẫu nhiên độ trễ ± (%) (0 = tắt)", jDelayInput)
         jPxInput = numberInput(ClickStore.jitterPx.toString())
         addLabeled(setCard, "Lệch vị trí chạm ngẫu nhiên ± (px) (0 = tắt)", jPxInput)
+
+        setCard.addView(sectionLabel("HẸN GIỜ & PHÍM TẮT"))
+        startDelayInput = numberInput(ClickStore.startDelaySec.toString())
+        addLabeled(setCard, "Đếm ngược trước khi chạy (giây) (0 = chạy ngay)", startDelayInput)
+        startAtInput = textInput(ClickStore.startAt, "vd 08:00:00")
+        addLabeled(setCard, "Hẹn giờ bắt đầu lúc HH:mm:ss (để trống = không hẹn; nếu giờ đã qua thì chờ tới ngày mai)", startAtInput)
+
+        val hotkey = CheckBox(this)
+        hotkey.text = "Phím giảm âm lượng để chạy/dừng (cần bảng nổi đang mở)"
+        hotkey.setTextColor(cText)
+        hotkey.textSize = 13f
+        hotkey.setPadding(0, dp(12), 0, 0)
+        hotkey.isChecked = ClickStore.volumeHotkey
+        hotkey.setOnCheckedChangeListener { _, checked ->
+            ClickStore.volumeHotkey = checked
+            ClickStore.save(this@MainActivity)
+        }
+        setCard.addView(hotkey)
 
         alphaLabel = textView("", 13f, cSub, false)
         alphaLabel.setPadding(0, dp(12), 0, dp(4))
@@ -366,11 +432,12 @@ class MainActivity : Activity() {
 
         // Nút xoá tất cả nút của kịch bản
         val clearBtn = pill("Xoá tất cả nút của kịch bản này", Color.TRANSPARENT) {
+            ClickStore.snapshot()
             ClickStore.actions.clear()
             ClickStore.save(this@MainActivity)
             FloatingService.instance?.refresh()
             refreshProfileUi()
-            Toast.makeText(this@MainActivity, "Đã xoá tất cả nút", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this@MainActivity, "Đã xoá tất cả nút (có thể Hoàn tác)", Toast.LENGTH_SHORT).show()
         }
         clearBtn.background = roundBg(Color.TRANSPARENT, 18, cRed, 1)
         clearBtn.setTextColor(cRed)
@@ -397,7 +464,10 @@ class MainActivity : Activity() {
                     "5. Kiểu Kéo có thêm chấm xanh ▸ là điểm kết thúc.\n" +
                     "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng. Ô số dưới nút ▶ hiện thời gian đã chạy (giờ:phút:giây) và số lần thao tác (×N).\n" +
                     "7. Mỗi kịch bản có danh sách nút riêng và điều kiện tự dừng riêng (số vòng, số phút, số lần thao tác).\n" +
-                    "8. Thông báo của app có nút Dừng, Mở bảng và Tắt để điều khiển nhanh khi bảng đang thu nhỏ.",
+                    "8. Thông báo của app có nút Dừng, Mở bảng và Tắt để điều khiển nhanh khi bảng đang thu nhỏ.\n" +
+                    "9. Nút ⏸ trên bảng nổi để tạm dừng / chạy tiếp. Có thể đặt đếm ngược hoặc hẹn giờ ở phần Cài đặt; màn hình được giữ sáng trong lúc chờ và chạy.\n" +
+                    "10. Nhóm lặp: mở nút cuối của nhóm, điền nhóm bắt đầu từ nút số mấy và số lần lặp.\n" +
+                    "11. Có thể thêm ô \"Nvp Klick\" vào Cài đặt nhanh để bật bảng và chạy/dừng.",
                 13f, cSub, false
             )
         )
@@ -437,6 +507,7 @@ class MainActivity : Activity() {
     private fun refreshProfileUi() {
         val c = ClickStore.current()
         profileName.text = c.name
+        undoBtn.visibility = if (ClickStore.hasUndo) View.VISIBLE else View.GONE
         profileInfo.text = "Kịch bản ${ClickStore.activeIndex + 1}/${ClickStore.profiles.size} · ${c.actions.size} nút"
     }
 
@@ -448,6 +519,8 @@ class MainActivity : Activity() {
         delayInput.setText(ClickStore.defaultDelay.toString())
         jDelayInput.setText(ClickStore.jitterDelayPct.toString())
         jPxInput.setText(ClickStore.jitterPx.toString())
+        startDelayInput.setText(ClickStore.startDelaySec.toString())
+        startAtInput.setText(ClickStore.startAt)
     }
 
     private fun afterProfileChange() {
@@ -527,6 +600,47 @@ class MainActivity : Activity() {
             .show()
     }
 
+    // ---------- Xuất / nhập file kịch bản ----------
+
+    private fun exportProfiles() {
+        saveSettings()
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+        i.addCategory(Intent.CATEGORY_OPENABLE)
+        i.type = "application/json"
+        i.putExtra(Intent.EXTRA_TITLE, "nvpklick-kichban.json")
+        startActivityForResult(i, REQ_EXPORT)
+    }
+
+    private fun importProfiles() {
+        saveSettings()
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+        i.addCategory(Intent.CATEGORY_OPENABLE)
+        i.type = "*/*"
+        startActivityForResult(i, REQ_IMPORT)
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) return
+        try {
+            if (requestCode == REQ_EXPORT) {
+                val bytes = ClickStore.exportJson(this).toByteArray(Charsets.UTF_8)
+                contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                Toast.makeText(this, "Đã xuất file kịch bản", Toast.LENGTH_SHORT).show()
+            } else if (requestCode == REQ_IMPORT) {
+                val text = contentResolver.openInputStream(uri)
+                    ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                val n = ClickStore.importJson(this, text)
+                afterProfileChange()
+                Toast.makeText(this, "Đã nhập $n kịch bản", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Lỗi đọc/ghi file: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     // ---------- Xử lý ----------
 
     private fun updateAlphaLabel() {
@@ -543,13 +657,15 @@ class MainActivity : Activity() {
         ClickStore.defaultDelay = delayInput.text.toString().toLongOrNull()?.coerceAtLeast(0L) ?: 500L
         ClickStore.jitterDelayPct = intOf(jDelayInput, 100)
         ClickStore.jitterPx = intOf(jPxInput, 100)
+        ClickStore.startDelaySec = intOf(startDelayInput, 3600)
+        ClickStore.startAt = startAtInput.text.toString().trim()
         ClickStore.save(this)
     }
 
     private fun onStartClicked() {
         saveSettings()
         if (FloatingService.instance != null) {
-            stopService(Intent(this, FloatingService::class.java))
+            FloatingService.instance?.requestQuit()
             Handler(Looper.getMainLooper()).postDelayed({ refreshStatus() }, 300L)
             return
         }
@@ -572,6 +688,10 @@ class MainActivity : Activity() {
         val accOk = AutoClickService.instance != null
         overlayDot.background = ovalBg(if (overlayOk) cGreen else cRed)
         accDot.background = ovalBg(if (accOk) cGreen else cRed)
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        val batOk = pm.isIgnoringBatteryOptimizations(packageName)
+        batDot.background = ovalBg(if (batOk) cGreen else cRed)
+        batBtn.text = if (batOk) "Đã tắt" else "Mở"
         overlayBtn.text = if (overlayOk) "Đã cấp" else "Cấp quyền"
         accBtn.text = if (accOk) "Đã bật" else "Bật"
 
