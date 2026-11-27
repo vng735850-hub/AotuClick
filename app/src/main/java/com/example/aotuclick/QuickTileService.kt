@@ -20,11 +20,11 @@ class QuickTileService : TileService() {
         val panel = FloatingService.instance
         if (panel != null) {
             panel.toggleRun()
-        } else if (!Settings.canDrawOverlays(this)) {
+        } else if (!Compat.canDrawOverlays(this)) {
             Toast.makeText(this, "Hãy cấp quyền hiển thị trên ứng dụng khác trong Nvp Klick", Toast.LENGTH_LONG).show()
         } else {
             try {
-                startForegroundService(Intent(this, FloatingService::class.java))
+                Compat.startForegroundSvc(this, Intent(this, FloatingService::class.java))
             } catch (e: Exception) {
                 Toast.makeText(this, "Không mở được bảng. Hãy mở app Nvp Klick.", Toast.LENGTH_LONG).show()
             }
