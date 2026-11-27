@@ -27,7 +27,9 @@ data class ClickAction(
     var x2: Float = 0f,
     var y2: Float = 0f,
     var delayMs: Long = 500L,
-    var durationMs: Long = 0L
+    var durationMs: Long = 0L,
+    var groupFrom: Int = 0,    // nút này kết thúc một nhóm, nhóm bắt đầu từ nút số này (1-based, 0 = không)
+    var groupRepeat: Int = 0   // tổng số lần chạy nhóm (>= 2 mới có tác dụng)
 ) {
     fun effectiveDuration(): Long = when {
         durationMs > 0 -> durationMs
@@ -62,6 +64,9 @@ object ClickStore {
     var jitterDelayPct = 0   // ngẫu nhiên độ trễ ± % (0 = tắt)
     var jitterPx = 0         // lệch vị trí ngẫu nhiên ± px (0 = tắt)
     var darkMode = true      // chế độ tối (true) / sáng (false) của app và bảng nổi
+    var startDelaySec = 0    // đếm ngược trước khi chạy (giây, 0 = chạy ngay)
+    var startAt = ""         // hẹn giờ bắt đầu HH:mm[:ss] (trống = không hẹn)
+    var volumeHotkey = false // phím giảm âm lượng bật/dừng
 
     private const val PREF = "nvpklick"
     private var loaded = false
@@ -113,6 +118,7 @@ object ClickStore {
 
     /** Xoá kịch bản đang chọn. Nếu chỉ còn một kịch bản thì làm trống nó. */
     fun deleteActive() {
+        snapshot()
         if (profiles.size <= 1) {
             current().actions.clear()
             return
@@ -139,7 +145,9 @@ object ClickStore {
                     x2 = o.optDouble("x2").toFloat(),
                     y2 = o.optDouble("y2").toFloat(),
                     delayMs = o.optLong("delay", 500L),
-                    durationMs = o.optLong("duration", 0L)
+                    durationMs = o.optLong("duration", 0L),
+                    groupFrom = o.optInt("groupFrom", 0),
+                    groupRepeat = o.optInt("groupRepeat", 0)
                 )
             )
         }
@@ -158,9 +166,128 @@ object ClickStore {
                     .put("y2", a.y2.toDouble())
                     .put("delay", a.delayMs)
                     .put("duration", a.durationMs)
+                    .put("groupFrom", a.groupFrom)
+                    .put("groupRepeat", a.groupRepeat)
             )
         }
         return arr
+    }
+
+    private fun parseProfiles(arr: JSONArray): List<Profile> {
+        val out = mutableListOf<Profile>()
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            out.add(
+                Profile(
+                    name = o.optString("name", "Kịch bản ${i + 1}"),
+                    loops = o.optInt("loops", 0),
+                    stopMinutes = o.optInt("stopMinutes", 0),
+                    stopTaps = o.optInt("stopTaps", 0),
+                    actions = parseActions(o.optJSONArray("actions") ?: JSONArray())
+                )
+            )
+        }
+        return out
+    }
+
+    private fun profilesToJson(): JSONArray {
+        val arr = JSONArray()
+        profiles.forEach { pr ->
+            arr.put(
+                JSONObject()
+                    .put("name", pr.name)
+                    .put("loops", pr.loops)
+                    .put("stopMinutes", pr.stopMinutes)
+                    .put("stopTaps", pr.stopTaps)
+                    .put("actions", actionsToJson(pr.actions))
+            )
+        }
+        return arr
+    }
+
+    private fun scaleActions(list: List<ClickAction>, fx: Float, fy: Float) {
+        list.forEach {
+            it.x *= fx
+            it.y *= fy
+            it.x2 *= fx
+            it.y2 *= fy
+        }
+    }
+
+    /** Co giãn toạ độ mọi nút khi kích thước màn hình đổi (xoay màn hình). */
+    fun rescale(oldW: Int, oldH: Int, newW: Int, newH: Int) {
+        if (oldW <= 0 || oldH <= 0 || newW <= 0 || newH <= 0) return
+        if (oldW == newW && oldH == newH) return
+        val fx = newW.toFloat() / oldW
+        val fy = newH.toFloat() / oldH
+        profiles.forEach { scaleActions(it.actions, fx, fy) }
+    }
+
+    // ---------- Hoàn tác ----------
+
+    private var undoJson: String? = null
+    private var undoActive = 0
+
+    val hasUndo: Boolean get() = undoJson != null
+
+    /** Chụp lại toàn bộ kịch bản trước khi xoá để có thể hoàn tác. */
+    fun snapshot() {
+        undoJson = profilesToJson().toString()
+        undoActive = activeIndex
+    }
+
+    fun undo() {
+        val raw = undoJson ?: return
+        try {
+            val list = parseProfiles(JSONArray(raw))
+            if (list.isNotEmpty()) {
+                profiles.clear()
+                profiles.addAll(list)
+                activeIndex = undoActive
+            }
+        } catch (e: Exception) {
+        }
+        undoJson = null
+        current()
+    }
+
+    // ---------- Xuất / nhập ----------
+
+    fun exportJson(ctx: Context): String {
+        val dm = ctx.applicationContext.resources.displayMetrics
+        return JSONObject()
+            .put("app", "NvpKlick")
+            .put("version", 1)
+            .put("sw", dm.widthPixels)
+            .put("sh", dm.heightPixels)
+            .put("profiles", profilesToJson())
+            .toString(2)
+    }
+
+    /** Nhập kịch bản từ JSON, thêm vào cuối danh sách. Trả về số kịch bản đã nhập. */
+    fun importJson(ctx: Context, text: String): Int {
+        val t = text.trim()
+        var sw = 0
+        var sh = 0
+        val arr = if (t.startsWith("[")) {
+            JSONArray(t)
+        } else {
+            val o = JSONObject(t)
+            sw = o.optInt("sw", 0)
+            sh = o.optInt("sh", 0)
+            o.getJSONArray("profiles")
+        }
+        val list = parseProfiles(arr)
+        if (list.isEmpty()) return 0
+        val dm = ctx.applicationContext.resources.displayMetrics
+        if (sw > 0 && sh > 0 && (sw != dm.widthPixels || sh != dm.heightPixels)) {
+            val fx = dm.widthPixels.toFloat() / sw
+            val fy = dm.heightPixels.toFloat() / sh
+            list.forEach { scaleActions(it.actions, fx, fy) }
+        }
+        profiles.addAll(list)
+        activeIndex = profiles.size - list.size
+        return list.size
     }
 
     fun ensureLoaded(ctx: Context) {
@@ -179,18 +306,7 @@ object ClickStore {
             val raw = p.getString("profiles", null)
             if (raw != null) {
                 val arr = JSONArray(raw)
-                for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    profiles.add(
-                        Profile(
-                            name = o.optString("name", "Kịch bản ${i + 1}"),
-                            loops = o.optInt("loops", 0),
-                            stopMinutes = o.optInt("stopMinutes", 0),
-                            stopTaps = o.optInt("stopTaps", 0),
-                            actions = parseActions(o.optJSONArray("actions") ?: JSONArray())
-                        )
-                    )
-                }
+                profiles.addAll(parseProfiles(arr))
                 activeIndex = p.getInt("active", 0)
             } else {
                 // Chuyển dữ liệu từ v1.0 (chỉ có một danh sách nút)
@@ -205,22 +321,24 @@ object ClickStore {
         } catch (e: Exception) {
             profiles.clear()
         }
+        // Dữ liệu lưu ở kích thước màn hình khác (vd. xoay ngang/dọc) → co giãn theo tỷ lệ
+        val dm = ctx.applicationContext.resources.displayMetrics
+        rescale(p.getInt("sw", 0), p.getInt("sh", 0), dm.widthPixels, dm.heightPixels)
+        startDelaySec = p.getInt("startDelaySec", 0).coerceIn(0, 3600)
+        startAt = p.getString("startAt", "") ?: ""
+        volumeHotkey = p.getBoolean("volumeHotkey", false)
         current()
     }
 
     fun save(ctx: Context) {
-        val arr = JSONArray()
-        profiles.forEach { pr ->
-            arr.put(
-                JSONObject()
-                    .put("name", pr.name)
-                    .put("loops", pr.loops)
-                    .put("stopMinutes", pr.stopMinutes)
-                    .put("stopTaps", pr.stopTaps)
-                    .put("actions", actionsToJson(pr.actions))
-            )
-        }
+        val arr = profilesToJson()
+        val dm = ctx.applicationContext.resources.displayMetrics
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putInt("sw", dm.widthPixels)
+            .putInt("sh", dm.heightPixels)
+            .putInt("startDelaySec", startDelaySec)
+            .putString("startAt", startAt)
+            .putBoolean("volumeHotkey", volumeHotkey)
             .putLong("defaultDelay", defaultDelay)
             .putInt("panelAlpha", panelAlpha)
             .putInt("jitterDelayPct", jitterDelayPct)
