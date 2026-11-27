@@ -27,13 +27,13 @@ class EditActionActivity : Activity() {
     private lateinit var durLabel: TextView
     private val radioIds = HashMap<Int, ActionType>()
 
-    private val cCard = Color.rgb(26, 29, 38)
-    private val cField = Color.rgb(38, 42, 54)
-    private val cSub = Color.rgb(150, 156, 170)
+    private val cCard: Int get() = AppTheme.card
+    private val cField: Int get() = AppTheme.field
+    private val cSub: Int get() = AppTheme.sub
     private val cBlue = Color.rgb(37, 99, 235)
     private val cGreen = Color.rgb(46, 160, 67)
     private val cRed = Color.rgb(211, 47, 47)
-    private val cGray = Color.rgb(55, 62, 80)
+    private val cGray: Int get() = AppTheme.gray
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
@@ -66,7 +66,7 @@ class EditActionActivity : Activity() {
         val title = TextView(this)
         title.text = "Nút số ${index + 1}"
         title.textSize = 20f
-        title.setTextColor(Color.WHITE)
+        title.setTextColor(AppTheme.text)
         title.setTypeface(title.typeface, Typeface.BOLD)
         root.addView(title)
 
@@ -75,7 +75,7 @@ class EditActionActivity : Activity() {
         ActionType.values().forEach { t ->
             val rb = RadioButton(this)
             rb.id = View.generateViewId()
-            rb.setTextColor(Color.WHITE)
+            rb.setTextColor(AppTheme.text)
             rb.buttonTintList = ColorStateList.valueOf(cBlue)
             rb.text = when (t) {
                 ActionType.TAP -> "Chạm (1 lần)"
@@ -137,7 +137,7 @@ class EditActionActivity : Activity() {
         val e = EditText(this)
         e.inputType = InputType.TYPE_CLASS_NUMBER
         e.setText(initial)
-        e.setTextColor(Color.WHITE)
+        e.setTextColor(AppTheme.text)
         e.textSize = 16f
         e.background = roundBg(cField, 10)
         e.setPadding(dp(12), dp(10), dp(12), dp(10))
