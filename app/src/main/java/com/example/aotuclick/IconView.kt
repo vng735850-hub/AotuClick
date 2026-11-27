@@ -16,7 +16,7 @@ enum class IconKind { PLAY, PAUSE, STOP, PLUS, MINUS, GEAR, CLOSE, GRIP, COLLAPS
 class IconView(
     context: Context,
     var kind: IconKind,
-    private val tint: Int = Color.WHITE
+    var tint: Int = Color.WHITE
 ) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
