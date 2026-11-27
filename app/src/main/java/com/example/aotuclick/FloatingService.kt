@@ -17,7 +17,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -43,7 +42,7 @@ class FloatingService : Service() {
     private lateinit var wm: WindowManager
     private var panelView: LinearLayout? = null
     private lateinit var panelLp: WindowManager.LayoutParams
-    private lateinit var toggleBtn: Button
+    private lateinit var playBtn: IconView
     private val items = mutableListOf<Item>()
 
     private var running = false
@@ -52,6 +51,10 @@ class FloatingService : Service() {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private val markerSize get() = dp(52)
     private val endSize get() = dp(40)
+
+    private val colGreen = Color.rgb(46, 160, 67)
+    private val colRed = Color.rgb(211, 47, 47)
+    private val colBtn = Color.rgb(45, 55, 72)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -63,8 +66,18 @@ class FloatingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
         ClickStore.ensureLoaded(this)
-        if (panelView == null) setup() else refresh()
+        if (panelView == null) {
+            setup()
+        } else {
+            refresh()
+            applyAlpha()
+        }
         return START_NOT_STICKY
+    }
+
+    /** Cập nhật độ đậm của bảng nổi theo cài đặt. */
+    fun applyAlpha() {
+        panelView?.alpha = ClickStore.panelAlpha / 100f
     }
 
     // ---------- Foreground notification ----------
@@ -108,48 +121,61 @@ class FloatingService : Service() {
         return lp
     }
 
+    private fun ovalBg(color: Int): GradientDrawable {
+        val d = GradientDrawable()
+        d.shape = GradientDrawable.OVAL
+        d.setColor(color)
+        return d
+    }
+
+    private fun circleButton(kind: IconKind, bg: Int, sizeDp: Int, onClick: () -> Unit): IconView {
+        val v = IconView(this, kind)
+        v.background = ovalBg(bg)
+        val lp = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+        lp.setMargins(0, dp(4), 0, dp(4))
+        v.layoutParams = lp
+        v.setOnClickListener { onClick() }
+        return v
+    }
+
     private fun setup() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
 
-        val handle = TextView(this).apply {
-            text = "⠿"
-            textSize = 22f
-            setPadding(dp(10), 0, dp(10), 0)
-            setTextColor(Color.WHITE)
-        }
-        val addBtn = Button(this).apply {
-            text = "＋"
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener { addAction() }
-        }
-        toggleBtn = Button(this).apply {
-            text = "▶ Bắt đầu"
-            setOnClickListener { toggle() }
-        }
-        val closeBtn = Button(this).apply {
-            text = "✕"
-            minWidth = 0
-            minimumWidth = 0
-            setOnClickListener { stopSelf() }
-        }
+        // Tay nắm kéo bảng
+        val grip = IconView(this, IconKind.GRIP, Color.argb(210, 190, 196, 210))
+        grip.layoutParams = LinearLayout.LayoutParams(dp(44), dp(30))
 
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.argb(210, 30, 30, 30))
-            addView(handle)
-            addView(addBtn)
-            addView(toggleBtn)
-            addView(closeBtn)
-        }
+        playBtn = circleButton(IconKind.PLAY, colGreen, 50) { toggle() }
+        val addBtn = circleButton(IconKind.PLUS, colBtn, 40) { addAction() }
+        val removeBtn = circleButton(IconKind.MINUS, colBtn, 40) { removeLastAction() }
+        val settingsBtn = circleButton(IconKind.GEAR, colBtn, 40) { openSettings() }
+        val closeBtn = circleButton(IconKind.CLOSE, Color.rgb(150, 50, 50), 40) { stopSelf() }
+
+        val bg = GradientDrawable()
+        bg.shape = GradientDrawable.RECTANGLE
+        bg.cornerRadius = dp(30).toFloat()
+        bg.setColor(Color.argb(240, 24, 27, 34))
+        bg.setStroke(dp(1), Color.argb(90, 255, 255, 255))
+
+        val panel = LinearLayout(this)
+        panel.orientation = LinearLayout.VERTICAL
+        panel.gravity = Gravity.CENTER_HORIZONTAL
+        panel.setPadding(dp(6), dp(4), dp(6), dp(6))
+        panel.background = bg
+        panel.alpha = ClickStore.panelAlpha / 100f
+        panel.addView(grip)
+        panel.addView(playBtn)
+        panel.addView(addBtn)
+        panel.addView(removeBtn)
+        panel.addView(settingsBtn)
+        panel.addView(closeBtn)
 
         panelLp = overlayParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            dp(8), dp(80)
+            dp(8), dp(120)
         )
-        attachTouch(handle, panelLp, panel, null, null)
+        attachTouch(grip, panelLp, panel, null, null)
         wm.addView(panel, panelLp)
         panelView = panel
 
@@ -244,6 +270,25 @@ class FloatingService : Service() {
         addMarker(ClickStore.actions.size - 1, a)
     }
 
+    /** Xoá nút cuối cùng trong danh sách. */
+    private fun removeLastAction() {
+        if (running) {
+            Toast.makeText(this, "Hãy dừng trước khi xoá nút", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (ClickStore.actions.isEmpty()) return
+        ClickStore.actions.removeAt(ClickStore.actions.size - 1)
+        ClickStore.save(this)
+        rebuildMarkers()
+    }
+
+    private fun openSettings() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        )
+    }
+
     private fun openEditor(index: Int) {
         if (running) return
         startActivity(
@@ -285,7 +330,7 @@ class FloatingService : Service() {
                     if (dragged) {
                         lp.x = ix + dx.toInt()
                         lp.y = iy + dy.toInt()
-                        try { wm.updateViewLayout(target, lp) } catch (e: Exception) {}
+                        try { wm.updateViewLayout(target, lp) } catch (ex: Exception) {}
                         onMove?.invoke(lp.x, lp.y)
                     }
                 }
@@ -302,10 +347,14 @@ class FloatingService : Service() {
     private fun setRunningUi(r: Boolean) {
         running = r
         if (destroyed) return
-        toggleBtn.text = if (r) "⏸ Dừng" else "▶ Bắt đầu"
-        items.forEach { it ->
-            setTouchable(it.view, it.lp, !r)
-            if (it.endView != null && it.endLp != null) setTouchable(it.endView, it.endLp, !r)
+        playBtn.kind = if (r) IconKind.PAUSE else IconKind.PLAY
+        playBtn.background = ovalBg(if (r) colRed else colGreen)
+        playBtn.invalidate()
+        items.forEach { item ->
+            setTouchable(item.view, item.lp, !r)
+            val ev = item.endView
+            val elp = item.endLp
+            if (ev != null && elp != null) setTouchable(ev, elp, !r)
         }
     }
 
@@ -336,14 +385,15 @@ class FloatingService : Service() {
 
         // Lấy toạ độ tâm thật trên màn hình của từng chấm
         val loc = IntArray(2)
-        items.forEach {
-            it.view.getLocationOnScreen(loc)
-            it.action.x = loc[0] + it.view.width / 2f
-            it.action.y = loc[1] + it.view.height / 2f
-            it.endView?.let { ev ->
+        items.forEach { item ->
+            item.view.getLocationOnScreen(loc)
+            item.action.x = loc[0] + item.view.width / 2f
+            item.action.y = loc[1] + item.view.height / 2f
+            val ev = item.endView
+            if (ev != null) {
                 ev.getLocationOnScreen(loc)
-                it.action.x2 = loc[0] + ev.width / 2f
-                it.action.y2 = loc[1] + ev.height / 2f
+                item.action.x2 = loc[0] + ev.width / 2f
+                item.action.y2 = loc[1] + ev.height / 2f
             }
         }
         ClickStore.save(this)
