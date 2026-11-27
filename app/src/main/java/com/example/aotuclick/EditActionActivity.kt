@@ -1,10 +1,14 @@
 package com.example.autoclick
 
 import android.app.Activity
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.text.InputType
+import android.view.Gravity
 import android.view.View
-import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.RadioButton
@@ -23,6 +27,24 @@ class EditActionActivity : Activity() {
     private lateinit var durLabel: TextView
     private val radioIds = HashMap<Int, ActionType>()
 
+    private val cCard = Color.rgb(26, 29, 38)
+    private val cField = Color.rgb(38, 42, 54)
+    private val cSub = Color.rgb(150, 156, 170)
+    private val cBlue = Color.rgb(37, 99, 235)
+    private val cGreen = Color.rgb(46, 160, 67)
+    private val cRed = Color.rgb(211, 47, 47)
+    private val cGray = Color.rgb(55, 62, 80)
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun roundBg(color: Int, radiusDp: Int): GradientDrawable {
+        val d = GradientDrawable()
+        d.shape = GradientDrawable.RECTANGLE
+        d.cornerRadius = dp(radiusDp).toFloat()
+        d.setColor(color)
+        return d
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ClickStore.ensureLoaded(this)
@@ -34,28 +56,32 @@ class EditActionActivity : Activity() {
         }
         action = a
 
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
-        }
+        window.setBackgroundDrawable(roundBg(cCard, 18))
 
-        root.addView(TextView(this).apply {
-            text = "Nút số ${index + 1}"
-            textSize = 20f
-        })
+        val pad = dp(16)
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(pad, pad, pad, pad)
+
+        val title = TextView(this)
+        title.text = "Nút số ${index + 1}"
+        title.textSize = 20f
+        title.setTextColor(Color.WHITE)
+        title.setTypeface(title.typeface, Typeface.BOLD)
+        root.addView(title)
 
         root.addView(label("Kiểu thao tác"))
         group = RadioGroup(this)
         ActionType.values().forEach { t ->
-            val rb = RadioButton(this).apply {
-                id = View.generateViewId()
-                text = when (t) {
-                    ActionType.TAP -> "Chạm (1 lần)"
-                    ActionType.DOUBLE -> "Chạm đúp"
-                    ActionType.HOLD -> "Giữ (nhấn giữ)"
-                    ActionType.SWIPE -> "Kéo (từ chấm số → chấm xanh ▸)"
-                }
+            val rb = RadioButton(this)
+            rb.id = View.generateViewId()
+            rb.setTextColor(Color.WHITE)
+            rb.buttonTintList = ColorStateList.valueOf(cBlue)
+            rb.text = when (t) {
+                ActionType.TAP -> "Chạm (1 lần)"
+                ActionType.DOUBLE -> "Chạm đúp"
+                ActionType.HOLD -> "Giữ (nhấn giữ)"
+                ActionType.SWIPE -> "Kéo (từ chấm số → chấm xanh ▸)"
             }
             radioIds[rb.id] = t
             group.addView(rb)
@@ -64,52 +90,79 @@ class EditActionActivity : Activity() {
         root.addView(group)
 
         root.addView(label("Độ trễ sau nút này (ms) — chờ bao lâu rồi mới sang nút kế tiếp"))
-        delayInput = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            setText(action.delayMs.toString())
-        }
+        delayInput = field(action.delayMs.toString())
         root.addView(delayInput)
 
         durLabel = label("Thời gian giữ / kéo (ms) — để trống = mặc định (Giữ 1000, Kéo 400)")
         root.addView(durLabel)
-        durInput = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER
-            if (action.durationMs > 0) setText(action.durationMs.toString())
-        }
+        durInput = field(if (action.durationMs > 0) action.durationMs.toString() else "")
         root.addView(durInput)
 
         group.setOnCheckedChangeListener { _, _ -> updateDurationVisibility() }
         updateDurationVisibility()
 
         // Hàng sắp xếp thứ tự + xoá
-        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row1.addView(weightBtn("↑ Lên") { move(-1) })
-        row1.addView(weightBtn("↓ Xuống") { move(1) })
-        row1.addView(weightBtn("🗑 Xoá") { delete() })
+        val row1 = LinearLayout(this)
+        row1.orientation = LinearLayout.HORIZONTAL
+        row1.addView(weightBtn("↑ Lên", cGray) { move(-1) })
+        row1.addView(weightBtn("↓ Xuống", cGray) { move(1) })
+        row1.addView(weightBtn("Xoá", cRed) { delete() })
         root.addView(row1)
 
-        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row2.addView(weightBtn("Huỷ") { finish() })
-        row2.addView(weightBtn("Lưu") {
+        val row2 = LinearLayout(this)
+        row2.orientation = LinearLayout.HORIZONTAL
+        row2.addView(weightBtn("Huỷ", cGray) { finish() })
+        row2.addView(weightBtn("Lưu", cGreen) {
             applyFields()
             commit()
             finish()
         })
         root.addView(row2)
 
-        setContentView(ScrollView(this).apply { addView(root) })
+        val scroll = ScrollView(this)
+        scroll.addView(root)
+        setContentView(scroll)
     }
 
-    private fun label(t: String) = TextView(this).apply {
-        text = t
-        textSize = 13f
-        setPadding(0, (12 * resources.displayMetrics.density).toInt(), 0, 0)
+    private fun label(t: String): TextView {
+        val v = TextView(this)
+        v.text = t
+        v.textSize = 13f
+        v.setTextColor(cSub)
+        v.setPadding(0, dp(12), 0, 0)
+        return v
     }
 
-    private fun weightBtn(t: String, onClick: () -> Unit) = Button(this).apply {
-        text = t
-        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        setOnClickListener { onClick() }
+    private fun field(initial: String): EditText {
+        val e = EditText(this)
+        e.inputType = InputType.TYPE_CLASS_NUMBER
+        e.setText(initial)
+        e.setTextColor(Color.WHITE)
+        e.textSize = 16f
+        e.background = roundBg(cField, 10)
+        e.setPadding(dp(12), dp(10), dp(12), dp(10))
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        lp.setMargins(0, dp(4), 0, 0)
+        e.layoutParams = lp
+        return e
+    }
+
+    private fun weightBtn(t: String, color: Int, onClick: () -> Unit): TextView {
+        val v = TextView(this)
+        v.text = t
+        v.setTextColor(Color.WHITE)
+        v.textSize = 14f
+        v.gravity = Gravity.CENTER
+        v.setPadding(dp(8), dp(12), dp(8), dp(12))
+        v.background = roundBg(color, 12)
+        val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        lp.setMargins(dp(4), dp(12), dp(4), 0)
+        v.layoutParams = lp
+        v.setOnClickListener { onClick() }
+        return v
     }
 
     private fun selectedType(): ActionType = radioIds[group.checkedRadioButtonId] ?: action.type
