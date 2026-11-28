@@ -239,6 +239,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         IslandService.installCrashLogger(this)
+        IslandPrefs.init(this)
+        IslandHistory.init(this)
+        IslandBus.appCtx = applicationContext
         ClickStore.ensureLoaded(this)
         currentTab = (savedInstanceState?.getInt("tab", 0) ?: 0).coerceIn(0, 3)
 
@@ -621,6 +624,42 @@ class MainActivity : Activity() {
         }
         timerRow.addView(timerBtn)
         toolCard.addView(timerRow)
+
+        val quickRow = LinearLayout(this)
+        quickRow.orientation = LinearLayout.HORIZONTAL
+        fun quickBtn(label: String, onTap: () -> Unit) {
+            val b = android.widget.Button(this)
+            b.text = label
+            b.isAllCaps = false
+            b.setOnClickListener {
+                if (IslandBus.view == null) {
+                    Toast.makeText(this, "Hãy bật công tắc Dynamic Island trước", Toast.LENGTH_SHORT).show()
+                } else {
+                    onTap()
+                }
+            }
+            quickRow.addView(b, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        quickBtn("1 phút") { IslandBus.startTimer(60) }
+        quickBtn("5 phút") { IslandBus.startTimer(300) }
+        quickBtn("10 phút") { IslandBus.startTimer(600) }
+        quickBtn("Bấm giờ") { IslandBus.startStopwatch() }
+        toolCard.addView(quickRow)
+
+        val histBtn = android.widget.Button(this)
+        histBtn.text = "Lịch sử thông báo"
+        histBtn.setOnClickListener { showHistory() }
+        toolCard.addView(histBtn)
+
+        val filterBtn = android.widget.Button(this)
+        filterBtn.text = "Lọc thông báo theo app"
+        filterBtn.setOnClickListener { showAppFilter() }
+        toolCard.addView(filterBtn)
+
+        val setBtn = android.widget.Button(this)
+        setBtn.text = "Tùy chỉnh Dynamic Island"
+        setBtn.setOnClickListener { showIslandSettings() }
+        toolCard.addView(setBtn)
         tools.addView(toolCard)
 
         val pages = arrayOf(home, scripts, tools, settings)
@@ -1115,6 +1154,125 @@ class MainActivity : Activity() {
     }
 
     /** Bật/tắt Dynamic Island nổi trên mọi app. Thiếu quyền hiển thị trên ứng dụng khác thì mở màn hình cấp quyền. */
+    private fun showHistory() {
+        IslandHistory.init(this)
+        val items = IslandHistory.snapshot()
+        if (items.isEmpty()) {
+            Toast.makeText(this, "Chưa có thông báo nào", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val fmt = java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.getDefault())
+        val rows = ArrayList<String>()
+        for (e in items) {
+            val body = if (e.text.isEmpty()) e.title else if (e.title.isEmpty()) e.text else e.title + ": " + e.text
+            rows.add(e.app + " · " + fmt.format(java.util.Date(e.time)) + "\n" + body)
+        }
+        val lv = android.widget.ListView(this)
+        lv.adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_1, rows)
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("Lịch sử thông báo (chạm để mở app)")
+            .setView(lv)
+            .setPositiveButton("Đóng", null)
+            .setNeutralButton("Xóa hết") { _, _ -> IslandHistory.clear() }
+            .create()
+        lv.setOnItemClickListener { _, _, pos, _ ->
+            IslandHistory.open(this, items[pos])
+            dlg.dismiss()
+        }
+        dlg.show()
+    }
+
+    private fun showAppFilter() {
+        IslandPrefs.init(this)
+        val pm = packageManager
+        val apps = ArrayList<Pair<String, String>>()
+        val seen = HashSet<String>()
+        try {
+            for (ai in pm.getInstalledApplications(0)) {
+                if (ai.packageName == packageName) continue
+                if (pm.getLaunchIntentForPackage(ai.packageName) == null) continue
+                if (seen.add(ai.packageName)) apps.add(Pair(ai.packageName, pm.getApplicationLabel(ai).toString()))
+            }
+        } catch (e: Throwable) {
+        }
+        if (apps.isEmpty()) {
+            Toast.makeText(this, "Không đọc được danh sách app", Toast.LENGTH_SHORT).show()
+            return
+        }
+        apps.sortBy { it.second.lowercase() }
+        fun rowText(i: Int): String = apps[i].second + "\n" + IslandPrefs.modeLabel(IslandPrefs.modeOf(apps[i].first))
+        val rows = ArrayList<String>()
+        for (i in apps.indices) rows.add(rowText(i))
+        val adapter = android.widget.ArrayAdapter(this, android.R.layout.simple_list_item_1, rows)
+        val lv = android.widget.ListView(this)
+        lv.adapter = adapter
+        lv.setOnItemClickListener { _, _, pos, _ ->
+            val pkg = apps[pos].first
+            IslandPrefs.setMode(pkg, (IslandPrefs.modeOf(pkg) + 1) % 4)
+            rows[pos] = rowText(pos)
+            adapter.notifyDataSetChanged()
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Chạm vào app để đổi chế độ")
+            .setView(lv)
+            .setPositiveButton("Xong", null)
+            .show()
+    }
+
+    private fun showIslandSettings() {
+        IslandPrefs.init(this)
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(20), dp(8), dp(20), dp(8))
+        fun addSeek(title: String, min: Int, max: Int, cur: Int, unit: String, onSet: (Int) -> Unit) {
+            val tv = TextView(this)
+            tv.text = title + ": " + cur + unit
+            tv.setPadding(0, dp(10), 0, 0)
+            val sb = SeekBar(this)
+            sb.max = max - min
+            sb.progress = cur - min
+            sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                    val v = p + min
+                    tv.text = title + ": " + v + unit
+                    if (fromUser) onSet(v)
+                }
+
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+            box.addView(tv)
+            box.addView(sb)
+        }
+        fun addCheck(title: String, cur: Boolean, onSet: (Boolean) -> Unit) {
+            val cb = CheckBox(this)
+            cb.text = title
+            cb.isChecked = cur
+            cb.setOnCheckedChangeListener { _, b -> onSet(b) }
+            box.addView(cb)
+        }
+        addSeek("Hạ vị trí xuống", 0, 80, IslandPrefs.offsetDp, " dp") { IslandPrefs.offsetDp = it }
+        addSeek("Kích thước", 70, 130, IslandPrefs.scalePct, "%") { IslandPrefs.scalePct = it }
+        addSeek("Thời gian hiện thông báo", 2, 15, IslandPrefs.noticeSec, " giây") { IslandPrefs.noticeSec = it }
+        addCheck("Luôn hiện viên thuốc (đồng hồ khi rảnh)", IslandPrefs.alwaysShow) { IslandPrefs.alwaysShow = it }
+        addCheck("Rung khi có thông báo", IslandPrefs.vibrate) { IslandPrefs.vibrate = it }
+        addCheck("Hiện cuộc gọi", IslandPrefs.showCall) { IslandPrefs.showCall = it }
+        addCheck("Hiện nhạc", IslandPrefs.showMusic) { IslandPrefs.showMusic = it }
+        addCheck("Hiện thông báo các app", IslandPrefs.showNotif) { IslandPrefs.showNotif = it }
+        addCheck("Hiện pin và sạc", IslandPrefs.showBattery) { IslandPrefs.showBattery = it }
+        addCheck("Hiện trạng thái auto-click", IslandPrefs.showClick) { IslandPrefs.showClick = it }
+        addCheck("Hiện tiến trình tải xuống", IslandPrefs.showProgress) { IslandPrefs.showProgress = it }
+        addCheck("Hiện chỉ đường Google Maps", IslandPrefs.showNav) { IslandPrefs.showNav = it }
+        val sv = ScrollView(this)
+        sv.addView(box)
+        AlertDialog.Builder(this)
+            .setTitle("Tùy chỉnh Dynamic Island")
+            .setView(sv)
+            .setPositiveButton("Xong", null)
+            .setOnDismissListener { IslandService.applySettings(this) }
+            .show()
+    }
+
     /** Quyền Điện thoại (theo dõi cuộc gọi, nghe/từ chối) và nhắc bật quyền đọc thông báo. */
     private fun askIslandPermissions() {
         if (Build.VERSION.SDK_INT >= 23) {

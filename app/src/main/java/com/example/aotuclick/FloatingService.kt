@@ -727,6 +727,7 @@ class FloatingService : Service() {
     private fun setRunningUi(r: Boolean) {
         val was = running
         running = r
+        if (r != was) IslandBus.clickRunning(r)
         if (destroyed) return
 
         // Bộ đếm: bắt đầu từ 000:00:00 mỗi lần chạy, giữ nguyên số khi dừng
@@ -776,7 +777,7 @@ class FloatingService : Service() {
         } catch (e: Exception) {}
     }
 
-    private fun togglePause() {
+    fun togglePause() {
         val svc = AutoClickService.instance
         if (!running || svc == null) {
             Toast.makeText(this, "Chỉ tạm dừng được khi đang chạy", Toast.LENGTH_SHORT).show()

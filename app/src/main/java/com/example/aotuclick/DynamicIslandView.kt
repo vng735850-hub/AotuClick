@@ -83,11 +83,13 @@ class DynamicIslandView(context: Context) : View(context) {
 
     private class Btn(val id: String, val cx: Float, val cy: Float, val hw: Float, val hh: Float)
 
-    private val density = resources.displayMetrics.density
+    private val baseDensity = resources.displayMetrics.density
+    private var density = baseDensity
     private val ui = Handler(Looper.getMainLooper())
 
     // ---------- Dữ liệu và trạng thái ----------
-    private val acts = arrayOf("timer", "music", "call", "note")
+    private val acts = arrayOf("timer", "music", "call", "note", "click", "prog", "nav", "charge", "idle")
+    private val priority = arrayOf("call", "note", "click", "prog", "nav", "music", "timer", "charge", "idle")
     private var act = 0
     private var ex = false
 
@@ -96,6 +98,8 @@ class DynamicIslandView(context: Context) : View(context) {
     private var tS = 0
     private var tTotal = 1
     private var tRun = true
+    private var tCountUp = false
+    private var tCount = 1
     // Nhạc
     private var musicOn = false
     private var mTitle = ""
@@ -113,6 +117,30 @@ class DynamicIslandView(context: Context) : View(context) {
     private var noteApp = ""
     private var noteTitle = ""
     private var noteText = ""
+    private var noteReply = false
+    // Auto-click
+    private var clickOn = false
+    private var clickCount = 0
+    private var clickSec = 0
+    private var clickPaused = false
+    // Tiến trình tải xuống
+    private var progOn = false
+    private var progApp = ""
+    private var progTitle = ""
+    private var progPct = 0
+    // Chỉ đường
+    private var navOn = false
+    private var navTitle = ""
+    private var navText = ""
+    // Pin và sạc
+    private var batPct = -1
+    private var charging = false
+    private var batFull = false
+    private var idleTime = ""
+    private val clockFmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+    // Cài đặt
+    var alwaysShow = true
+    var noticeMs = 5000L
     private var lastActive = false
     private val noteCollapse = Runnable {
         if (noteOn && ex && acts[act] == "note") {
@@ -164,7 +192,12 @@ class DynamicIslandView(context: Context) : View(context) {
         Layer("mc", 206f, 36f), Layer("me", 316f, 160f),
         Layer("cc", 206f, 36f), Layer("ce", 316f, 84f),
         Layer("oc", 206f, 36f), Layer("oe", 316f, 84f),
-        Layer("nc", 206f, 36f), Layer("ne", 316f, 84f)
+        Layer("nc", 206f, 36f), Layer("ne", 316f, 84f),
+        Layer("kc", 206f, 36f), Layer("ke", 316f, 84f),
+        Layer("pc", 206f, 36f), Layer("pe", 316f, 84f),
+        Layer("vc", 206f, 36f), Layer("ve", 316f, 84f),
+        Layer("bc", 206f, 36f), Layer("be", 316f, 84f),
+        Layer("ic", 206f, 36f)
     )
 
     // ---------- Sơn ----------
@@ -187,6 +220,7 @@ class DynamicIslandView(context: Context) : View(context) {
     private val cGreen = Color.rgb(0x30, 0xD1, 0x58)
     private val cRed = Color.rgb(0xFF, 0x45, 0x3A)
     private val cPink = Color.rgb(0xFF, 0x8F, 0xAB)
+    private val cBlue = Color.rgb(0x4A, 0xA3, 0xFF)
 
     private val phonePath = buildPhone()
     private val nextPath = buildNext()
@@ -270,17 +304,28 @@ class DynamicIslandView(context: Context) : View(context) {
             "timer" -> 't'
             "music" -> 'm'
             "note" -> 'n'
+            "click" -> 'k'
+            "prog" -> 'p'
+            "nav" -> 'v'
+            "charge" -> 'b'
+            "idle" -> 'i'
             else -> if (callOn) 'o' else 'c'
         }
+        if (c == 'i') return "ic"
         return c.toString() + (if (ex) 'e' else 'c')
     }
 
     private fun label(): String {
         val a = acts[act]
         val s = when (a) {
-            "timer" -> "Hẹn giờ " + fmt(tS)
+            "timer" -> timerLabel() + " " + fmt(tS)
             "music" -> "Nhạc, " + mTitle
             "note" -> "Thông báo, " + noteApp + ", " + noteTitle
+            "click" -> "Auto-click đang chạy, " + clickCount + " lần"
+            "prog" -> "Đang tải, " + progTitle + ", " + progPct + " phần trăm"
+            "nav" -> "Chỉ đường, " + navTitle
+            "charge" -> if (batFull) "Pin đã đầy" else "Đang sạc, " + batPct + " phần trăm"
+            "idle" -> "Dynamic Island, " + idleTime
             else -> if (callOn) "Đang gọi với " + dispName() + ", " + fmt(cS) else "Cuộc gọi đến từ " + dispName()
         }
         return s + (if (ex) ", đã mở rộng" else "")
@@ -298,6 +343,9 @@ class DynamicIslandView(context: Context) : View(context) {
         "prev" -> "Bài trước"
         "next" -> "Bài sau"
         "dismiss" -> "Đóng thông báo"
+        "reply" -> "Trả lời nhanh"
+        "clickPause" -> if (clickPaused) "Chạy tiếp auto-click" else "Tạm dừng auto-click"
+        "clickStop" -> "Dừng auto-click"
         "decline" -> "Từ chối"
         "accept" -> "Nghe máy"
         else -> "Kết thúc cuộc gọi"
@@ -308,7 +356,9 @@ class DynamicIslandView(context: Context) : View(context) {
         "me" -> listOf(Btn("prev", -72f, 122f, 28f, 22f), Btn("play", 0f, 122f, 28f, 22f), Btn("next", 72f, 122f, 28f, 22f))
         "ce" -> listOf(Btn("decline", 56f, 42f, 24f, 24f), Btn("accept", 114f, 42f, 24f, 24f))
         "oe" -> listOf(Btn("end", 114f, 42f, 24f, 24f))
-        "ne" -> listOf(Btn("dismiss", 124f, 42f, 24f, 24f))
+        "ne" -> if (noteReply) listOf(Btn("reply", 66f, 42f, 24f, 24f), Btn("dismiss", 124f, 42f, 24f, 24f))
+        else listOf(Btn("dismiss", 124f, 42f, 24f, 24f))
+        "ke" -> listOf(Btn("clickPause", -118f, 42f, 24f, 24f), Btn("clickStop", -60f, 42f, 24f, 24f))
         else -> emptyList()
     }
 
@@ -367,7 +417,7 @@ class DynamicIslandView(context: Context) : View(context) {
     private fun go(dir: Int, quiet: Boolean) {
         for (i in 1..acts.size) {
             val c = (act + dir * i + acts.size * acts.size) % acts.size
-            if (isActive(acts[c])) {
+            if (acts[c] != "idle" && isActive(acts[c])) {
                 act = c
                 break
             }
@@ -412,6 +462,18 @@ class DynamicIslandView(context: Context) : View(context) {
                 ui.removeCallbacks(noteHide)
                 afterChange(null)
             }
+            "reply" -> {
+                onAction?.invoke("reply")
+                noteOn = false
+                ui.removeCallbacks(noteCollapse)
+                ui.removeCallbacks(noteHide)
+                afterChange(null)
+            }
+            "clickPause" -> {
+                clickPaused = !clickPaused
+                onAction?.invoke("clickPause")
+            }
+            "clickStop" -> onAction?.invoke("clickStop")
         }
         invalidate()
     }
@@ -421,10 +483,19 @@ class DynamicIslandView(context: Context) : View(context) {
         "timer" -> timerOn
         "music" -> musicOn
         "call" -> callState != 0
-        else -> noteOn
+        "note" -> noteOn
+        "click" -> clickOn
+        "prog" -> progOn
+        "nav" -> navOn
+        "charge" -> charging
+        else -> alwaysShow
     }
 
-    private fun anyActive(): Boolean = timerOn || musicOn || callState != 0 || noteOn
+    private fun anyActive(): Boolean =
+        timerOn || musicOn || callState != 0 || noteOn || clickOn || progOn || navOn || charging
+
+    private fun timerLabel(): String =
+        if (tCountUp) "Bấm giờ" else "Hẹn giờ" + (if (tCount > 1) " ×" + tCount else "")
 
     private fun dispName(): String = if (callName.isEmpty()) "Cuộc gọi" else callName
 
@@ -441,14 +512,19 @@ class DynamicIslandView(context: Context) : View(context) {
 
     /** Chọn hoạt động đang hiển thị sau khi dữ liệu đổi. Ưu tiên: gọi, thông báo, nhạc, hẹn giờ. */
     private fun afterChange(prefer: String?) {
-        if (prefer != null && isActive(prefer)) {
-            val i = acts.indexOf(prefer)
+        var pf = prefer
+        if (pf != null && pf != "call") {
+            if (callState == 1) pf = null
+            else if (noteOn && pf != "note") pf = null
+        }
+        if (pf != null && isActive(pf)) {
+            val i = acts.indexOf(pf)
             if (i != act) {
                 act = i
                 ex = false
             }
-        } else if (!isActive(acts[act])) {
-            for (a in arrayOf("call", "note", "music", "timer")) {
+        } else if (!isActive(acts[act]) || (acts[act] == "idle" && anyActive())) {
+            for (a in priority) {
                 if (isActive(a)) {
                     act = acts.indexOf(a)
                     ex = false
@@ -458,7 +534,7 @@ class DynamicIslandView(context: Context) : View(context) {
         }
         val active = anyActive()
         if (!active) ex = false
-        render(false, !reduceMotion() && active)
+        render(false, !reduceMotion() && (active || alwaysShow))
         if (active != lastActive) {
             lastActive = active
             onActiveChanged?.invoke(active)
@@ -466,18 +542,88 @@ class DynamicIslandView(context: Context) : View(context) {
         invalidate()
     }
 
-    fun setTimer(total: Int, remaining: Int, running: Boolean) {
-        timerOn = total > 0
+    fun setTimer(total: Int, value: Int, running: Boolean, countUp: Boolean, count: Int) {
+        val first = !timerOn
+        timerOn = true
+        tCountUp = countUp
+        tCount = count
         tTotal = Math.max(1, total)
-        tS = remaining
+        tS = value
         tRun = running
-        ringT.set(tS / tTotal.toFloat())
-        afterChange("timer")
+        val target = if (countUp) (value % 60) / 60f else value / tTotal.toFloat()
+        if (first) ringT.set(target) else ringT.to(target, 1000, LinearInterpolator(), 0, !reduceMotion())
+        afterChange(if (first) "timer" else null)
+    }
+
+    fun focusTimer() {
+        if (timerOn) afterChange("timer")
     }
 
     fun clearTimer() {
         timerOn = false
         afterChange(null)
+    }
+
+    fun setClick(count: Int, sec: Int, paused: Boolean) {
+        val first = !clickOn
+        clickOn = true
+        clickCount = count
+        clickSec = sec
+        clickPaused = paused
+        afterChange(if (first) "click" else null)
+    }
+
+    fun clearClick() {
+        if (!clickOn) return
+        clickOn = false
+        afterChange(null)
+    }
+
+    fun setProgress(app: String, title: String, pct: Int) {
+        val first = !progOn
+        progOn = true
+        progApp = app
+        progTitle = title
+        progPct = pct
+        afterChange(if (first) "prog" else null)
+    }
+
+    fun clearProgress() {
+        if (!progOn) return
+        progOn = false
+        afterChange(null)
+    }
+
+    fun setNav(title: String, text: String) {
+        val first = !navOn
+        navOn = true
+        navTitle = title
+        navText = text
+        afterChange(if (first) "nav" else null)
+    }
+
+    fun clearNav() {
+        if (!navOn) return
+        navOn = false
+        afterChange(null)
+    }
+
+    fun setBattery(pct: Int, isCharging: Boolean, isFull: Boolean) {
+        batPct = pct
+        batFull = isFull
+        charging = isCharging
+        afterChange(null)
+    }
+
+    fun applyPrefs(always: Boolean, noticeMillis: Long) {
+        alwaysShow = always
+        noticeMs = noticeMillis
+        afterChange(null)
+    }
+
+    fun setSizeScale(f: Float) {
+        density = baseDensity * f
+        invalidate()
     }
 
     fun setMusic(title: String, artist: String, isPlaying: Boolean, posSec: Int, lenSec: Int) {
@@ -520,10 +666,11 @@ class DynamicIslandView(context: Context) : View(context) {
         }
     }
 
-    fun showNotice(app: String, title: String, text: String) {
+    fun showNotice(app: String, title: String, text: String, canReply: Boolean = false) {
         noteApp = app
         noteTitle = title
         noteText = text
+        noteReply = canReply
         noteOn = true
         ui.removeCallbacks(noteCollapse)
         ui.removeCallbacks(noteHide)
@@ -534,8 +681,8 @@ class DynamicIslandView(context: Context) : View(context) {
         } else {
             afterChange(null)
         }
-        ui.postDelayed(noteCollapse, 4500L)
-        ui.postDelayed(noteHide, 7500L)
+        ui.postDelayed(noteCollapse, noticeMs)
+        ui.postDelayed(noteHide, noticeMs + 3000L)
     }
 
     override fun performClick(): Boolean {
@@ -555,25 +702,16 @@ class DynamicIslandView(context: Context) : View(context) {
     // ---------- Đồng hồ 1 giây ----------
     private val clock = object : Runnable {
         override fun run() {
-            if (timerOn && tRun) {
-                tS -= 1
-                if (tS <= 0) {
-                    tS = 0
-                    timerOn = false
-                    onAction?.invoke("timerDone")
-                    afterChange(null)
-                }
-            }
+            idleTime = clockFmt.format(java.util.Date())
             if (musicOn && playing) {
                 mS += 1
                 if (mLen > 0 && mS > mLen) mS = mLen
             }
             if (callState == 2) cS += 1
             val animate = !reduceMotion()
-            ringT.to(if (tTotal > 0) tS.toFloat() / tTotal else 0f, 1000, LinearInterpolator(), 0, animate)
             progT.to(if (mLen > 0) mS.toFloat() / mLen else 0f, 1000, LinearInterpolator(), 0, animate)
             contentDescription = label()
-            if (lastActive) invalidate()
+            invalidate()
             ui.postDelayed(this, 1000)
         }
     }
@@ -833,6 +971,38 @@ class DynamicIslandView(context: Context) : View(context) {
         c.restore()
     }
 
+    private fun drawRing(c: Canvas, cx: Float, cy: Float, r: Float, sw: Float, frac: Float, color: Int) {
+        stroke.strokeWidth = sw
+        stroke.color = rgba(color, 0.28f)
+        c.drawCircle(cx, cy, r, stroke)
+        val sweep = 360f * frac.coerceIn(0f, 1f)
+        if (sweep > 0.5f) {
+            stroke.color = color
+            rect.set(cx - r, cy - r, cx + r, cy + r)
+            c.drawArc(rect, -90f, sweep, false, stroke)
+        }
+    }
+
+    private fun drawNavArrow(c: Canvas, cx: Float, cy: Float, size: Float, color: Int) {
+        stroke.color = color
+        stroke.strokeWidth = 2.8f
+        icon24(c, cx, cy, size, 0f) {
+            c.drawLine(12f, 19f, 12f, 5f, stroke)
+            c.drawLine(12f, 5f, 6f, 11f, stroke)
+            c.drawLine(12f, 5f, 18f, 11f, stroke)
+        }
+    }
+
+    private fun drawReply(c: Canvas, cx: Float, cy: Float, size: Float, color: Int) {
+        stroke.color = color
+        stroke.strokeWidth = 2.8f
+        icon24(c, cx, cy, size, 0f) {
+            c.drawLine(4f, 12f, 20f, 12f, stroke)
+            c.drawLine(4f, 12f, 10f, 6f, stroke)
+            c.drawLine(4f, 12f, 10f, 18f, stroke)
+        }
+    }
+
     private fun drawX(c: Canvas, cx: Float, cy: Float, size: Float, color: Int) {
         stroke.color = color
         stroke.strokeWidth = 2.8f
@@ -996,7 +1166,7 @@ class DynamicIslandView(context: Context) : View(context) {
                 roundBtn(c, "cancel", -60f, 42f, Color.argb(43, 255, 255, 255)) {
                     drawX(c, -60f, 42f, 22f, white)
                 }
-                drawText(c, "Hẹn giờ", 138f, 22f, 12f, rgba(cOrange, 0.85f), Paint.Align.RIGHT, tfBold)
+                drawText(c, timerLabel(), 138f, 22f, 12f, rgba(cOrange, 0.85f), Paint.Align.RIGHT, tfBold)
                 drawText(c, fmt(tS), 138f, 49f, 38f, cOrange, Paint.Align.RIGHT, tfLight)
             }
             "mc" -> {
@@ -1058,10 +1228,74 @@ class DynamicIslandView(context: Context) : View(context) {
             }
             "ne" -> {
                 drawAvatar(c, -118f, 42f, 48f, 19f, initialOf(noteApp))
-                drawText(c, ellip(noteApp, 12f, tfReg, 150f), -82f, 24f, 12f, white55, Paint.Align.LEFT, tfReg)
-                drawText(c, ellip(noteTitle, 16f, tfBold, 150f), -82f, 44f, 16f, white, Paint.Align.LEFT, tfBold)
-                drawText(c, ellip(noteText, 13f, tfReg, 150f), -82f, 64f, 13f, white55, Paint.Align.LEFT, tfReg)
+                val tw = if (noteReply) 115f else 150f
+                drawText(c, ellip(noteApp, 12f, tfReg, tw), -82f, 24f, 12f, white55, Paint.Align.LEFT, tfReg)
+                drawText(c, ellip(noteTitle, 16f, tfBold, tw), -82f, 44f, 16f, white, Paint.Align.LEFT, tfBold)
+                drawText(c, ellip(noteText, 13f, tfReg, tw), -82f, 64f, 13f, white55, Paint.Align.LEFT, tfReg)
+                if (noteReply) {
+                    roundBtn(c, "reply", 66f, 42f, Color.argb(43, 255, 255, 255)) { drawReply(c, 66f, 42f, 22f, white) }
+                }
                 roundBtn(c, "dismiss", 124f, 42f, Color.argb(43, 255, 255, 255)) { drawX(c, 124f, 42f, 22f, white) }
+            }
+            "kc" -> {
+                drawPlayTri(c, -85f, 18f, 18f, cGreen, false)
+                drawText(c, if (clickPaused) "Tạm dừng" else "Auto-click", -68f, 18f, 13f, white, Paint.Align.LEFT, tfBold)
+                drawText(c, clickCount.toString(), 89f, 18f, 15f, cGreen, Paint.Align.RIGHT, tfBold)
+            }
+            "ke" -> {
+                roundBtn(c, "clickPause", -118f, 42f, rgba(cGreen, 0.24f)) {
+                    if (clickPaused) drawPlayTri(c, -118f, 42f, 22f, cGreen, false) else drawBar2(c, -118f, 42f, 22f, cGreen)
+                }
+                roundBtn(c, "clickStop", -60f, 42f, cRed) {
+                    fill.shader = null
+                    fill.color = white
+                    rect.set(-67f, 35f, -53f, 49f)
+                    c.drawRoundRect(rect, 3f, 3f, fill)
+                }
+                drawText(c, "Auto-click · " + fmt(clickSec), 138f, 22f, 12f, rgba(cGreen, 0.9f), Paint.Align.RIGHT, tfBold)
+                drawText(c, clickCount.toString(), 138f, 49f, 38f, white, Paint.Align.RIGHT, tfLight)
+            }
+            "pc" -> {
+                drawRing(c, -84f, 18f, 8.25f, 2.38f, progPct / 100f, cBlue)
+                drawText(c, ellip(if (progTitle.isEmpty()) progApp else progTitle, 13f, tfBold, 105f), -68f, 18f, 13f, white, Paint.Align.LEFT, tfBold)
+                drawText(c, progPct.toString() + "%", 89f, 18f, 15f, cBlue, Paint.Align.RIGHT, tfBold)
+            }
+            "pe" -> {
+                drawRing(c, -118f, 42f, 18f, 4f, progPct / 100f, cBlue)
+                drawText(c, progPct.toString(), -118f, 42f, 13f, white, Paint.Align.CENTER, tfBold)
+                drawText(c, ellip(progApp, 12f, tfReg, 210f), -82f, 28f, 12f, white55, Paint.Align.LEFT, tfReg)
+                drawText(c, ellip(progTitle, 16f, tfBold, 210f), -82f, 48f, 16f, white, Paint.Align.LEFT, tfBold)
+                drawText(c, if (progPct >= 100) "Hoàn tất" else "Đang tải · " + progPct + "%", -82f, 66f, 13f, cBlue, Paint.Align.LEFT, tfBold)
+            }
+            "vc" -> {
+                drawNavArrow(c, -84f, 18f, 20f, white)
+                drawText(c, ellip(if (navTitle.isEmpty()) navText else navTitle, 13f, tfBold, 150f), -68f, 18f, 13f, white, Paint.Align.LEFT, tfBold)
+            }
+            "ve" -> {
+                fill.shader = null
+                fill.color = Color.argb(43, 255, 255, 255)
+                c.drawCircle(-118f, 42f, 24f, fill)
+                drawNavArrow(c, -118f, 42f, 26f, white)
+                drawText(c, "Chỉ đường", -82f, 26f, 12f, white55, Paint.Align.LEFT, tfReg)
+                drawText(c, ellip(navTitle, 17f, tfBold, 215f), -82f, 46f, 17f, white, Paint.Align.LEFT, tfBold)
+                drawText(c, ellip(navText, 13f, tfReg, 215f), -82f, 66f, 13f, white55, Paint.Align.LEFT, tfReg)
+            }
+            "bc" -> {
+                drawRing(c, -84f, 18f, 8.25f, 2.38f, Math.max(0, batPct) / 100f, cGreen)
+                drawText(c, if (batFull) "Đã đầy" else "Đang sạc", -68f, 18f, 13f, white, Paint.Align.LEFT, tfBold)
+                drawText(c, Math.max(0, batPct).toString() + "%", 89f, 18f, 15f, cGreen, Paint.Align.RIGHT, tfBold)
+            }
+            "be" -> {
+                drawRing(c, -118f, 42f, 18f, 4f, Math.max(0, batPct) / 100f, cGreen)
+                drawText(c, Math.max(0, batPct).toString(), -118f, 42f, 13f, white, Paint.Align.CENTER, tfBold)
+                drawText(c, if (batFull) "Pin đã đầy" else "Đang sạc", -82f, 31f, 12.5f, white55, Paint.Align.LEFT, tfReg)
+                drawText(c, Math.max(0, batPct).toString() + "%", -82f, 55f, 26f, cGreen, Paint.Align.LEFT, tfBold)
+            }
+            "ic" -> {
+                val col = if (batPct in 0..19) cOrange else white
+                drawRing(c, -84f, 18f, 8.25f, 2.38f, Math.max(0, batPct) / 100f, col)
+                drawText(c, if (batPct >= 0) batPct.toString() + "%" else "", -68f, 18f, 12.5f, white55, Paint.Align.LEFT, tfReg)
+                drawText(c, idleTime, 89f, 18f, 15f, white, Paint.Align.RIGHT, tfBold)
             }
         }
         // Viền focus bàn phím cho nút đang chọn
@@ -1082,7 +1316,7 @@ class DynamicIslandView(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (!lastActive) return
+        if (!lastActive && !alwaysShow) return
         val now = SystemClock.uptimeMillis()
         if (lastFrame != 0L && playing) eqMs += Math.min(now - lastFrame, 64L)
         lastFrame = now
@@ -1160,6 +1394,7 @@ class DynamicIslandView(context: Context) : View(context) {
     init {
         isClickable = true
         isFocusable = true
-        render(false, false)
+        idleTime = clockFmt.format(java.util.Date())
+        afterChange(null)
     }
 }

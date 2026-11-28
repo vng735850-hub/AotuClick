@@ -35,6 +35,7 @@ class IslandNotificationListener : NotificationListenerService() {
         private val answerRe = Regex("answer|accept|pick up|trả lời|nghe máy|nhận", RegexOption.IGNORE_CASE)
         private val declineRe = Regex("decline|reject|dismiss|từ chối|hủy", RegexOption.IGNORE_CASE)
         private val endRe = Regex("hang up|end call|end|disconnect|kết thúc|cúp|ngắt|decline", RegexOption.IGNORE_CASE)
+        private const val MAPS_PKG = "com.google.android.apps.maps"
         private val genericRe = Regex("incoming|ongoing|calling|cuộc gọi|đang gọi", RegexOption.IGNORE_CASE)
     }
 
@@ -73,6 +74,9 @@ class IslandNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         instance = this
+        IslandPrefs.init(this)
+        IslandHistory.init(this)
+        IslandBus.appCtx = applicationContext
         try {
             val m = getSystemService(Context.MEDIA_SESSION_SERVICE) as MediaSessionManager
             msm = m
@@ -122,7 +126,7 @@ class IslandNotificationListener : NotificationListenerService() {
     fun pushMedia() {
         val v = IslandBus.view ?: return
         val c = curController
-        if (c == null) {
+        if (c == null || !IslandPrefs.showMusic) {
             v.clearMusic()
             return
         }
@@ -167,6 +171,7 @@ class IslandNotificationListener : NotificationListenerService() {
 
     private fun onCallState(state: Int, number: String?) {
         lastCallState = state
+        if (!IslandPrefs.showCall) return
         val v = IslandBus.view ?: return
         when (state) {
             TelephonyManager.CALL_STATE_RINGING ->
@@ -181,39 +186,121 @@ class IslandNotificationListener : NotificationListenerService() {
     }
 
     // ---------- Thông báo ----------
+    private fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    } catch (e: Throwable) {
+        pkg
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
         if (!IslandBus.active()) return
         if (sbn.packageName == packageName) return
+        IslandPrefs.init(this)
         val n = sbn.notification ?: return
         val cat = n.category
+        val ex = n.extras
         if (cat == Notification.CATEGORY_CALL) {
-            handleCall(sbn, n)
+            if (IslandPrefs.showCall) handleCall(sbn, n)
             return
         }
         if (cat == Notification.CATEGORY_TRANSPORT) return
+        val mode = IslandPrefs.modeOf(sbn.packageName)
+        val islandAllowed = mode == IslandPrefs.MODE_ISLAND || mode == IslandPrefs.MODE_BOTH
+        val ongoing = (n.flags and Notification.FLAG_ONGOING_EVENT) != 0
+
+        // Chỉ đường Google Maps
+        if (sbn.packageName == MAPS_PKG && ongoing) {
+            if (IslandPrefs.showNav && islandAllowed) handleNav(sbn, n)
+            return
+        }
+
+        // Tiến trình tải xuống / sao chép
+        val progMax = ex.getInt(Notification.EXTRA_PROGRESS_MAX, 0)
+        if (progMax > 0 && !ex.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE, false)) {
+            if (IslandPrefs.showProgress && islandAllowed) handleProgress(sbn, n, progMax)
+            return
+        }
         if (cat == Notification.CATEGORY_PROGRESS || cat == Notification.CATEGORY_SERVICE) return
-        if ((n.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
+        if (ongoing) return
         if ((n.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0) return
         if ((n.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
-        val ex = n.extras
-        if (ex.getInt(Notification.EXTRA_PROGRESS_MAX, 0) > 0) return
+
+        // Lọc theo app
+        if (mode == IslandPrefs.MODE_KEEP) return
+        if (mode == IslandPrefs.MODE_BLOCK) {
+            try { cancelNotification(sbn.key) } catch (e: Throwable) { }
+            return
+        }
+        if (!IslandPrefs.showNotif) return
+
         val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
         val text = (ex.getCharSequence(Notification.EXTRA_BIG_TEXT)
             ?: ex.getCharSequence(Notification.EXTRA_TEXT))?.toString() ?: ""
         if (title.isEmpty() && text.isEmpty()) return
-        val app = try {
-            packageManager.getApplicationLabel(packageManager.getApplicationInfo(sbn.packageName, 0)).toString()
-        } catch (e: Throwable) {
-            sbn.packageName
-        }
+        val app = appLabel(sbn.packageName)
         val pi = n.contentIntent
+
+        // Nút trả lời nhanh (có hộp nhập chữ trong thông báo gốc)
+        var reply: Notification.Action? = null
+        val list = n.actions
+        if (list != null) {
+            for (a in list) {
+                val ri = a.remoteInputs
+                if (ri != null && ri.isNotEmpty()) {
+                    reply = a
+                    break
+                }
+            }
+        }
+        val replyAct = reply
+        val label = if (title.isEmpty()) app else app + " · " + title
+
+        IslandHistory.add(sbn.packageName, app, title, text, pi)
         main.post {
             IslandBus.noteIntent = pi
-            IslandBus.view?.showNotice(app, title, text)
+            IslandBus.replyAction = replyAct
+            IslandBus.replyLabel = label
+            IslandBus.view?.showNotice(app, title, text, replyAct != null)
+            IslandBus.vibrateNote()
         }
-        // Ẩn thông báo gốc, chỉ hiện trên island
-        try { cancelNotification(sbn.key) } catch (e: Throwable) { }
+        // Ẩn thông báo gốc, chỉ hiện trên island (trừ khi chọn giữ cả hai)
+        if (mode == IslandPrefs.MODE_ISLAND) {
+            try { cancelNotification(sbn.key) } catch (e: Throwable) { }
+        }
+    }
+
+    private fun handleNav(sbn: StatusBarNotification, n: Notification) {
+        val ex = n.extras
+        val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+        val text = (ex.getCharSequence(Notification.EXTRA_TEXT)
+            ?: ex.getCharSequence(Notification.EXTRA_SUB_TEXT))?.toString() ?: ""
+        if (title.isEmpty() && text.isEmpty()) return
+        main.post {
+            IslandBus.navKey = sbn.key
+            IslandBus.view?.setNav(title, text)
+        }
+    }
+
+    private fun handleProgress(sbn: StatusBarNotification, n: Notification, max: Int) {
+        val ex = n.extras
+        val cur = ex.getInt(Notification.EXTRA_PROGRESS, 0)
+        val pct = (cur * 100L / max).toInt().coerceIn(0, 100)
+        val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+        val app = appLabel(sbn.packageName)
+        val key = sbn.key
+        main.post {
+            IslandBus.progKey = key
+            IslandBus.view?.setProgress(app, title, pct)
+            if (pct >= 100) {
+                main.postDelayed({
+                    if (IslandBus.progKey == key) {
+                        IslandBus.progKey = null
+                        IslandBus.view?.clearProgress()
+                    }
+                }, 3000L)
+            }
+        }
     }
 
     private fun handleCall(sbn: StatusBarNotification, n: Notification) {
@@ -274,6 +361,18 @@ class IslandNotificationListener : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         if (sbn == null) return
+        if (sbn.key == IslandBus.progKey) {
+            main.post {
+                IslandBus.progKey = null
+                IslandBus.view?.clearProgress()
+            }
+        }
+        if (sbn.key == IslandBus.navKey) {
+            main.post {
+                IslandBus.navKey = null
+                IslandBus.view?.clearNav()
+            }
+        }
         if (phoneListener == null && sbn.key == IslandBus.callKey) {
             main.post {
                 IslandBus.clearCall()

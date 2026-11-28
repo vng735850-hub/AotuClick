@@ -54,6 +54,25 @@ class IslandService : Service() {
             }, 2000L)
         }
 
+        fun applyViewPrefs(v: DynamicIslandView) {
+            v.applyPrefs(IslandPrefs.alwaysShow, IslandPrefs.noticeSec * 1000L)
+        }
+
+        /** Gọi khi người dùng đổi cài đặt: áp dụng ngay kích thước, vị trí và các lựa chọn khác. */
+        fun applySettings(ctx: Context) {
+            IslandPrefs.init(ctx)
+            val s = instance
+            if (s != null) {
+                s.applyLayout()
+            } else if (fbView != null) {
+                stopFallback()
+                startFallback(ctx)
+            }
+            IslandBus.view?.let { applyViewPrefs(it) }
+            IslandBus.refresh()
+            IslandNotificationListener.instance?.pushMedia()
+        }
+
         @Volatile private var fbView: DynamicIslandView? = null
         private var fbWm: WindowManager? = null
         private val fbHandler = Handler(Looper.getMainLooper())
@@ -62,6 +81,8 @@ class IslandService : Service() {
         fun startFallback(ctx: Context) {
             val app = ctx.applicationContext
             if (fbView != null || instance != null) return
+            IslandPrefs.init(app)
+            IslandBus.appCtx = app
             if (!Settings.canDrawOverlays(app)) {
                 log = "đường vòng: thiếu quyền overlay"
                 return
@@ -69,10 +90,11 @@ class IslandService : Service() {
             try {
                 val w = app.getSystemService(Context.WINDOW_SERVICE) as WindowManager
                 val d = app.resources.displayMetrics.density
+                val sc = IslandPrefs.scalePct / 100f
                 val id = app.resources.getIdentifier("status_bar_height", "dimen", "android")
                 val sb = if (id > 0) app.resources.getDimensionPixelSize(id) else (24 * d).toInt()
                 val p = WindowManager.LayoutParams(
-                    (320 * d).toInt(), (48 * d).toInt(),
+                    (320 * d * sc).toInt(), (48 * d * sc).toInt(),
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -82,22 +104,24 @@ class IslandService : Service() {
                     PixelFormat.TRANSLUCENT
                 )
                 p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                p.y = sb + (2 * d).toInt()
+                p.y = sb + (2 * d).toInt() + (IslandPrefs.offsetDp * d).toInt()
                 val v = DynamicIslandView(app)
-                v.onAction = { id -> IslandBus.onAction(app, id) }
+                v.setSizeScale(sc)
+                applyViewPrefs(v)
+                v.onAction = { id2 -> IslandBus.onAction(app, id2) }
                 v.onActiveChanged = { active ->
                     val f = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                     p.flags = if (active) (p.flags and f.inv()) else (p.flags or f)
                     try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
                 }
                 val shrink = Runnable {
-                    p.height = (48 * d).toInt()
+                    p.height = (48 * d * sc).toInt()
                     try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
                 }
                 v.onExpandChanged = { ex ->
                     fbHandler.removeCallbacks(shrink)
                     if (ex) {
-                        p.height = (186 * d).toInt()
+                        p.height = (186 * d * sc).toInt()
                         try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
                     } else {
                         fbHandler.postDelayed(shrink, 800L)
@@ -108,6 +132,7 @@ class IslandService : Service() {
                 fbView = v
                 IslandBus.view = v
                 IslandNotificationListener.instance?.pushMedia()
+                IslandBus.refresh()
                 log = "đường vòng: addView OK (dịch vụ không khởi động được)"
             } catch (e: Throwable) {
                 log = "đường vòng lỗi: $e"
@@ -184,12 +209,18 @@ class IslandService : Service() {
     private val shrink = Runnable { applyHeight(false) }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun scale(): Float = IslandPrefs.scalePct / 100f
+    private fun sdp(v: Int): Int = (v * resources.displayMetrics.density * scale()).toInt()
+    private fun yExtra(): Int = dp(IslandPrefs.offsetDp)
+    private var isTall = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        IslandPrefs.init(this)
+        IslandBus.appCtx = applicationContext
         log = "onCreate"
         ClickStore.ensureLoaded(this)
         startAsForeground()
@@ -274,7 +305,7 @@ class IslandService : Service() {
 
     private fun buildParams(type: Int): WindowManager.LayoutParams {
         val p = WindowManager.LayoutParams(
-            dp(320), dp(48), type,
+            sdp(320), sdp(48), type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -284,7 +315,7 @@ class IslandService : Service() {
             PixelFormat.TRANSLUCENT
         )
         p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        p.y = topOffset()
+        p.y = topOffset() + yExtra()
         if (Build.VERSION.SDK_INT >= 30) {
             p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         } else if (Build.VERSION.SDK_INT >= 28) {
@@ -302,12 +333,15 @@ class IslandService : Service() {
             v.onExpandChanged = { expanded -> setTall(expanded) }
             v.onAction = { id -> IslandBus.onAction(applicationContext, id) }
             v.onActiveChanged = { active -> setTouchable(active) }
+            v.setSizeScale(scale())
+            applyViewPrefs(v)
             val p = buildParams(type)
             w.addView(v, p)
             island = v
             lp = p
             IslandBus.view = v
             IslandNotificationListener.instance?.pushMedia()
+            IslandBus.refresh()
             true
         } catch (e: Throwable) {
             Log.e("IslandService", "addView failed type=$type", e)
@@ -318,6 +352,20 @@ class IslandService : Service() {
     }
 
     private var lastError = ""
+
+    /** Áp dụng lại kích thước và vị trí khi người dùng đổi cài đặt. */
+    fun applyLayout() {
+        val v = island ?: return
+        val p = lp ?: return
+        v.setSizeScale(scale())
+        p.width = sdp(320)
+        p.height = if (isTall) sdp(186) else sdp(48)
+        p.y = topOffset() + yExtra()
+        try {
+            wm.updateViewLayout(v, p)
+        } catch (e: Throwable) {
+        }
+    }
 
     /** Bật nhận chạm khi viên thuốc có nội dung, tắt khi rảnh để không chặn thanh trạng thái bên dưới. */
     private fun setTouchable(on: Boolean) {
@@ -341,6 +389,7 @@ class IslandService : Service() {
     private val powerReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, i: Intent?) {
             val v = island ?: return
+            if (!IslandPrefs.showBattery) return
             val pct = batteryPct()
             when (i?.action) {
                 Intent.ACTION_POWER_CONNECTED -> v.showNotice("Pin", "Đang sạc", "$pct%")
@@ -350,6 +399,24 @@ class IslandService : Service() {
         }
     }
     private var powerRegistered = false
+
+    private var wasFull = false
+    private var batRegistered = false
+    private val batteryReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: Intent?) {
+            if (i == null) return
+            val v = island ?: return
+            val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            val sc = i.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            val pct = if (level >= 0 && sc > 0) level * 100 / sc else -1
+            val plugged = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+            val full = i.getIntExtra(BatteryManager.EXTRA_STATUS, -1) == BatteryManager.BATTERY_STATUS_FULL
+            val on = IslandPrefs.showBattery
+            v.setBattery(pct, plugged && on, full && plugged)
+            if (on && full && plugged && !wasFull) v.showNotice("Pin", "Pin đã đầy", "100%")
+            wasFull = full && plugged
+        }
+    }
 
     private fun addIsland() {
         // Ưu tiên lớp phủ Trợ năng (không bị MIUI/ColorOS... chặn), thiếu thì dùng lớp phủ thường
@@ -383,6 +450,11 @@ class IslandService : Service() {
             powerRegistered = true
         } catch (e: Throwable) {
         }
+        try {
+            registerReceiver(batteryReceiver, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            batRegistered = true
+        } catch (e: Throwable) {
+        }
         log = "addView OK ($mode)"
         Toast.makeText(this, "Dynamic Island đã bật ($mode)", Toast.LENGTH_SHORT).show()
         island?.showNotice("Nvp Klick", "Dynamic Island đã bật", "Sẵn sàng hiện cuộc gọi, nhạc, thông báo")
@@ -397,7 +469,8 @@ class IslandService : Service() {
     private fun applyHeight(tall: Boolean) {
         val v = island ?: return
         val p = lp ?: return
-        p.height = if (tall) dp(186) else dp(48)
+        isTall = tall
+        p.height = if (tall) sdp(186) else sdp(48)
         try {
             wm.updateViewLayout(v, p)
         } catch (e: Exception) {
@@ -408,7 +481,7 @@ class IslandService : Service() {
         super.onConfigurationChanged(newConfig)
         val v = island ?: return
         val p = lp ?: return
-        p.y = topOffset()
+        p.y = topOffset() + yExtra()
         try {
             wm.updateViewLayout(v, p)
         } catch (e: Exception) {
@@ -419,6 +492,10 @@ class IslandService : Service() {
         if (powerRegistered) {
             try { unregisterReceiver(powerReceiver) } catch (e: Throwable) { }
             powerRegistered = false
+        }
+        if (batRegistered) {
+            try { unregisterReceiver(batteryReceiver) } catch (e: Throwable) { }
+            batRegistered = false
         }
         if (IslandBus.view === island) IslandBus.view = null
         log = log + " | onDestroy"
