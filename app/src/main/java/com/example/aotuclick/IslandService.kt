@@ -43,7 +43,29 @@ class IslandService : Service() {
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, IslandService::class.java))
         }
+
+        @Volatile var log: String = "chưa có lần chạy nào"
+
+        fun report(ctx: Context): String {
+            val svc = instance
+            val v = svc?.island
+            val sb = StringBuilder()
+            sb.append("Máy: ").append(Build.MANUFACTURER).append(" ").append(Build.MODEL)
+                .append(" / Android ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n")
+            sb.append("Quyền hiển thị trên app khác: ").append(Settings.canDrawOverlays(ctx)).append("\n")
+            sb.append("Dịch vụ Trợ năng đang chạy: ").append(AutoClickService.instance != null).append("\n")
+            sb.append("islandOn (đã lưu): ").append(ClickStore.islandOn).append("\n")
+            sb.append("IslandService đang chạy: ").append(svc != null).append("\n")
+            sb.append("View đã gắn vào cửa sổ: ").append(v?.isAttachedToWindow).append("\n")
+            sb.append("Kích thước view: ").append(v?.width).append("x").append(v?.height).append("\n")
+            sb.append("Cửa sổ hiển thị: ").append(v?.windowVisibility == View.VISIBLE).append("\n")
+            sb.append("Chế độ: ").append(svc?.modeName ?: "-").append("\n")
+            sb.append("Nhật ký: ").append(log)
+            return sb.toString()
+        }
     }
+
+    private var modeName = ""
 
     private lateinit var wm: WindowManager
     private var island: DynamicIslandView? = null
@@ -58,10 +80,12 @@ class IslandService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        log = "onCreate"
         ClickStore.ensureLoaded(this)
         startAsForeground()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         if (!Settings.canDrawOverlays(this) && AutoClickService.instance == null) {
+            log = "dừng: thiếu quyền overlay và chưa bật Trợ năng"
             ClickStore.islandOn = false
             ClickStore.save(this)
             Toast.makeText(this, "Chưa có quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
@@ -79,6 +103,7 @@ class IslandService : Service() {
             return START_NOT_STICKY
         }
         if (!ClickStore.islandOn) {
+            log = "dừng: islandOn=false khi onStartCommand"
             stopSelf()
             return START_NOT_STICKY
         }
@@ -172,6 +197,7 @@ class IslandService : Service() {
         } catch (e: Throwable) {
             Log.e("IslandService", "addView failed type=$type", e)
             lastError = e.javaClass.simpleName + ": " + (e.message ?: "")
+            log = "addView lỗi (type=$type): $lastError"
             false
         }
     }
@@ -200,6 +226,8 @@ class IslandService : Service() {
             stopSelf()
             return
         }
+        modeName = mode
+        log = "addView OK ($mode)"
         Toast.makeText(this, "Dynamic Island đã bật ($mode)", Toast.LENGTH_SHORT).show()
     }
 
@@ -231,6 +259,7 @@ class IslandService : Service() {
     }
 
     override fun onDestroy() {
+        log = log + " | onDestroy"
         handler.removeCallbacks(shrink)
         island?.let {
             try {
