@@ -545,7 +545,7 @@ class MainActivity : Activity() {
         islandTxt.orientation = LinearLayout.VERTICAL
         islandTxt.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         islandTxt.addView(textView("Dynamic Island", 16f, cText, false))
-        val islandHint = textView("Hiện viên thuốc đen nổi trên mọi app, ngay dưới thanh trạng thái. Chạm để mở rộng, vuốt ngang để đổi giữa hẹn giờ, nhạc và cuộc gọi. Cần quyền hiển thị trên ứng dụng khác.", 13f, cSub, false)
+        val islandHint = textView("Viên thuốc đen dưới thanh trạng thái hiện cuộc gọi, nhạc, thông báo các app, sạc pin và hẹn giờ. Chạm để mở rộng, vuốt ngang để đổi. Cần quyền hiển thị trên ứng dụng khác và quyền đọc thông báo.", 13f, cSub, false)
         islandHint.setPadding(0, dp(2), 0, 0)
         islandTxt.addView(islandHint)
         islandRow.addView(islandTxt)
@@ -575,6 +575,52 @@ class MainActivity : Activity() {
                 .show()
         }
         toolCard.addView(diagBtn)
+
+        val notifBtn = android.widget.Button(this)
+        notifBtn.text = "Cấp quyền đọc thông báo (nhạc, tin nhắn, cuộc gọi)"
+        notifBtn.setOnClickListener {
+            try {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            } catch (e: Exception) {
+                Toast.makeText(this, "Không mở được màn hình cấp quyền", Toast.LENGTH_SHORT).show()
+            }
+        }
+        toolCard.addView(notifBtn)
+
+        val testBtn = android.widget.Button(this)
+        testBtn.text = "Thử hiện thông báo trên island"
+        testBtn.setOnClickListener {
+            val v = IslandBus.view
+            if (v == null) {
+                Toast.makeText(this, "Hãy bật công tắc Dynamic Island trước", Toast.LENGTH_SHORT).show()
+            } else {
+                v.showNotice("Nvp Klick", "Dynamic Island hoạt động", "Đây là thông báo thử")
+            }
+        }
+        toolCard.addView(testBtn)
+
+        val timerRow = LinearLayout(this)
+        timerRow.orientation = LinearLayout.HORIZONTAL
+        timerRow.gravity = Gravity.CENTER_VERTICAL
+        val timerEdit = EditText(this)
+        timerEdit.hint = "Số phút"
+        timerEdit.inputType = InputType.TYPE_CLASS_NUMBER
+        timerEdit.setSingleLine(true)
+        timerRow.addView(timerEdit, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val timerBtn = android.widget.Button(this)
+        timerBtn.text = "Hẹn giờ"
+        timerBtn.setOnClickListener {
+            val m = timerEdit.text.toString().trim().toIntOrNull() ?: 0
+            if (m <= 0 || m > 600) {
+                Toast.makeText(this, "Nhập số phút từ 1 đến 600", Toast.LENGTH_SHORT).show()
+            } else if (IslandBus.view == null) {
+                Toast.makeText(this, "Hãy bật công tắc Dynamic Island trước", Toast.LENGTH_SHORT).show()
+            } else {
+                IslandBus.startTimer(m * 60)
+            }
+        }
+        timerRow.addView(timerBtn)
+        toolCard.addView(timerRow)
         tools.addView(toolCard)
 
         val pages = arrayOf(home, scripts, tools, settings)
@@ -1069,6 +1115,23 @@ class MainActivity : Activity() {
     }
 
     /** Bật/tắt Dynamic Island nổi trên mọi app. Thiếu quyền hiển thị trên ứng dụng khác thì mở màn hình cấp quyền. */
+    /** Quyền Điện thoại (theo dõi cuộc gọi, nghe/từ chối) và nhắc bật quyền đọc thông báo. */
+    private fun askIslandPermissions() {
+        if (Build.VERSION.SDK_INT >= 23) {
+            val need = arrayOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.ANSWER_PHONE_CALLS)
+                .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 31)
+        }
+        if (!IslandNotificationListener.isEnabled(this)) {
+            Toast.makeText(this, "Bật \"Truy cập thông báo\" cho Nvp Klick để island hiện nhạc, tin nhắn, cuộc gọi", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 31) IslandNotificationListener.instance?.startPhoneListener()
+    }
+
     private fun islandAllowed(): Boolean = Settings.canDrawOverlays(this) || AutoClickService.instance != null
 
     private fun setIsland(on: Boolean) {
@@ -1085,6 +1148,7 @@ class MainActivity : Activity() {
             return
         }
         pendingIsland = false
+        if (on) askIslandPermissions()
         ClickStore.islandOn = on
         ClickStore.save(this)
         if (on) IslandService.start(this) else IslandService.stop(this)
