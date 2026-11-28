@@ -3,28 +3,85 @@ name: Build APK
 on:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: 17
 
-      - uses: gradle/actions/setup-gradle@v4
+      - name: Accept licenses and install Android SDK 34
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null || true
+          "$SDKM" "platforms;android-34" "build-tools;34.0.0" || true
+
+      - name: Find Gradle project
+        id: proj
+        run: |
+          f=$(find . -maxdepth 3 \( -name settings.gradle -o -name settings.gradle.kts \) -not -path './.git/*' | head -1)
+          if [ -z "$f" ]; then
+            echo "::error::Khong tim thay settings.gradle(.kts) trong repo"
+            exit 1
+          fi
+          echo "dir=$(dirname "$f")" >> "$GITHUB_OUTPUT"
+          echo "Project dir: $(dirname "$f")"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.7'
+          gradle-version: 8.9
 
       - name: Build debug APK
-        run: gradle assembleDebug --stacktrace
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          set -o pipefail
+          gradle assembleDebug --stacktrace --console=plain 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-      - uses: actions/upload-artifact@v4
+      - name: Show errors
+        if: failure()
+        run: |
+          echo "=== What went wrong ==="
+          grep -n -E "^e: |What went wrong" -A4 build.log 2>/dev/null | head -40 || true
+          echo "=== Caused by ==="
+          grep -n -E "Caused by" -A10 build.log 2>/dev/null | head -60 || true
+
+      - name: Prepare APK with version in name
+        id: apk
+        working-directory: ${{ steps.proj.outputs.dir }}
+        run: |
+          VER=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts || echo "dev")
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/dist/NvpKlick-v${VER}.apk"
+          echo "ver=$VER" >> "$GITHUB_OUTPUT"
+          ls -l "$GITHUB_WORKSPACE/dist"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
         with:
-          name: NvpIsland-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: NvpKlick-v${{ steps.apk.outputs.ver }}
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (only for tags like v1.1)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          generate_release_notes: true
