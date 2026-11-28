@@ -40,10 +40,72 @@ class IslandService : Service() {
             installCrashLogger(ctx)
             log = "đã gọi startForegroundService"
             try {
-                ctx.startForegroundService(Intent(ctx, IslandService::class.java))
+                val cn = ctx.startForegroundService(Intent(ctx, IslandService::class.java))
+                log = "đã gọi startForegroundService, kết quả=" + (cn?.flattenToShortString() ?: "NULL (không tìm thấy dịch vụ)")
             } catch (e: Throwable) {
                 log = "startForegroundService lỗi: $e"
             }
+            // Nếu sau 2 giây dịch vụ vẫn chưa chạy thì tự vẽ island trực tiếp (đường vòng)
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (instance == null && ClickStore.islandOn) startFallback(ctx)
+            }, 2000L)
+        }
+
+        @Volatile private var fbView: DynamicIslandView? = null
+        private var fbWm: WindowManager? = null
+        private val fbHandler = Handler(Looper.getMainLooper())
+
+        /** Đường vòng: gắn viên thuốc thẳng từ tiến trình app, không cần dịch vụ. */
+        fun startFallback(ctx: Context) {
+            val app = ctx.applicationContext
+            if (fbView != null || instance != null) return
+            if (!Settings.canDrawOverlays(app)) {
+                log = "đường vòng: thiếu quyền overlay"
+                return
+            }
+            try {
+                val w = app.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val d = app.resources.displayMetrics.density
+                val id = app.resources.getIdentifier("status_bar_height", "dimen", "android")
+                val sb = if (id > 0) app.resources.getDimensionPixelSize(id) else (24 * d).toInt()
+                val p = WindowManager.LayoutParams(
+                    (320 * d).toInt(), (48 * d).toInt(),
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT
+                )
+                p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                p.y = sb + (2 * d).toInt()
+                val v = DynamicIslandView(app)
+                val shrink = Runnable {
+                    p.height = (48 * d).toInt()
+                    try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
+                }
+                v.onExpandChanged = { ex ->
+                    fbHandler.removeCallbacks(shrink)
+                    if (ex) {
+                        p.height = (186 * d).toInt()
+                        try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
+                    } else {
+                        fbHandler.postDelayed(shrink, 800L)
+                    }
+                }
+                w.addView(v, p)
+                fbWm = w
+                fbView = v
+                log = "đường vòng: addView OK (dịch vụ không khởi động được)"
+            } catch (e: Throwable) {
+                log = "đường vòng lỗi: $e"
+            }
+        }
+
+        fun stopFallback() {
+            val v = fbView ?: return
+            try { fbWm?.removeView(v) } catch (e: Throwable) { }
+            fbView = null
         }
 
         private const val DIAG_PREF = "island_diag"
@@ -58,6 +120,7 @@ class IslandService : Service() {
         }
 
         fun stop(ctx: Context) {
+            stopFallback()
             ctx.stopService(Intent(ctx, IslandService::class.java))
         }
 
@@ -83,6 +146,14 @@ class IslandService : Service() {
             sb.append("View đã gắn vào cửa sổ: ").append(v?.isAttachedToWindow).append("\n")
             sb.append("Kích thước view: ").append(v?.width).append("x").append(v?.height).append("\n")
             sb.append("Cửa sổ hiển thị: ").append(v?.windowVisibility == View.VISIBLE).append("\n")
+            val declared = try {
+                ctx.packageManager.getServiceInfo(android.content.ComponentName(ctx, IslandService::class.java), 0)
+                "có"
+            } catch (e: Throwable) {
+                "KHÔNG ($e)"
+            }
+            sb.append("Dịch vụ khai báo trong Manifest: ").append(declared).append("\n")
+            sb.append("Đường vòng đang hiện: ").append(fbView != null).append("\n")
             sb.append("Chế độ: ").append(svc?.modeName ?: "-").append("\n")
             val pf = ctx.applicationContext.getSharedPreferences(DIAG_PREF, Context.MODE_PRIVATE)
             sb.append("Nhật ký: ").append(pf.getString("log", "(trống)")).append("\n")
