@@ -238,6 +238,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        IslandService.installCrashLogger(this)
         ClickStore.ensureLoaded(this)
         currentTab = (savedInstanceState?.getInt("tab", 0) ?: 0).coerceIn(0, 3)
 
