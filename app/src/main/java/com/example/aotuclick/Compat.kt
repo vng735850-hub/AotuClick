@@ -13,7 +13,7 @@ import android.view.WindowManager
 /** Hàm tương thích để app chạy được từ Android 5.0 (API 21) trở lên. */
 object Compat {
     /** Android 7.0+ mới có API cử chỉ của Trợ năng (dispatchGesture). */
-    val canGesture: Boolean get() = Build.SDK_INT >= 24
+    val canGesture: Boolean get() = Build.VERSION.SDK_INT >= 24
 
     fun canDrawOverlays(ctx: Context): Boolean =
         if (Build.VERSION.SDK_INT >= 23) Settings.canDrawOverlays(ctx) else true
