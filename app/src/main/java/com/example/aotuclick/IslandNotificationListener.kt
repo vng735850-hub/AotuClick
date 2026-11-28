@@ -164,11 +164,46 @@ class IslandNotificationListener : NotificationListenerService() {
         for (k in uriKeys) {
             val s = md.getString(k)
             if (s.isNullOrEmpty()) continue
-            if (s == uriArtKey) return uriArt
+            if (s == uriArtKey) return uriArt ?: notifArtFor()
             loadUriArt(s)
-            return null
+            return notifArtFor()
         }
-        return null
+        return notifArtFor()
+    }
+
+    // Ảnh bìa dự phòng: ảnh lớn của thông báo trình phát nhạc (khi metadata không có ảnh)
+    private var notifArtPkg: String? = null
+    private var notifArtKey: String? = null
+    private var notifArt: Bitmap? = null
+
+    private fun notifArtFor(): Bitmap? =
+        if (notifArtPkg != null && notifArtPkg == curController?.packageName) notifArt else null
+
+    private fun captureNotifArt(sbn: StatusBarNotification, n: Notification) {
+        try {
+            val ex = n.extras
+            val key = sbn.packageName + "|" + (ex?.getCharSequence(Notification.EXTRA_TITLE) ?: "") + "|" +
+                (ex?.getCharSequence(Notification.EXTRA_TEXT) ?: "")
+            if (key == notifArtKey && notifArt != null) return
+            val ic = n.getLargeIcon() ?: return
+            val d = ic.loadDrawable(this) ?: return
+            val bmp: Bitmap = if (d is android.graphics.drawable.BitmapDrawable && d.bitmap != null) {
+                d.bitmap
+            } else {
+                val w = if (d.intrinsicWidth > 1) d.intrinsicWidth else 192
+                val h = if (d.intrinsicHeight > 1) d.intrinsicHeight else 192
+                val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                val cv = android.graphics.Canvas(b)
+                d.setBounds(0, 0, w, h)
+                d.draw(cv)
+                b
+            }
+            notifArtKey = key
+            notifArtPkg = sbn.packageName
+            notifArt = bmp
+            if (curController?.packageName == sbn.packageName) main.post { pushMedia() }
+        } catch (e: Throwable) {
+        }
     }
 
     private fun loadUriArt(s: String) {
@@ -286,7 +321,10 @@ class IslandNotificationListener : NotificationListenerService() {
             if (IslandPrefs.showCall) handleCall(sbn, n)
             return
         }
-        if (cat == Notification.CATEGORY_TRANSPORT) return
+        if (cat == Notification.CATEGORY_TRANSPORT) {
+            captureNotifArt(sbn, n)
+            return
+        }
         val mode = IslandPrefs.modeOf(sbn.packageName)
         val islandAllowed = mode == IslandPrefs.MODE_ISLAND || mode == IslandPrefs.MODE_BOTH
         val ongoing = (n.flags and Notification.FLAG_ONGOING_EVENT) != 0

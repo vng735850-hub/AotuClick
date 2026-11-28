@@ -60,7 +60,10 @@ class IslandService : Service() {
                 g && IslandPrefs.swipeStopwatch,
                 g && IslandPrefs.holdTimer,
                 g && IslandPrefs.swipeShade,
-                IslandPrefs.holdTiers()
+                IslandPrefs.holdTiers(),
+                g && IslandPrefs.swipeRotate,
+                g && IslandPrefs.dblTapSingle,
+                g && IslandPrefs.dblTapMulti
             )
             v.applyPrefs(IslandPrefs.alwaysShow, IslandPrefs.noticeSec * 1000L)
         }

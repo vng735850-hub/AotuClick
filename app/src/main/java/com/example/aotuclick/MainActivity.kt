@@ -1365,6 +1365,23 @@ class MainActivity : Activity() {
         addCheck("Vuốt trái → tự bấm giờ", IslandPrefs.swipeStopwatch) { IslandPrefs.swipeStopwatch = it }
         addCheck("Giữ thanh Island → tự hẹn giờ theo thời gian giữ", IslandPrefs.holdTimer) { IslandPrefs.holdTimer = it }
         addCheck("Vuốt xuống → mở thanh thông báo", IslandPrefs.swipeShade) { IslandPrefs.swipeShade = it }
+        addCheck("Vuốt phải → bật/tắt tự xoay màn hình", IslandPrefs.swipeRotate) { IslandPrefs.swipeRotate = it }
+        addCheck("Nhấn đúp → bật chế độ 1 mục tiêu", IslandPrefs.dblTapSingle) { IslandPrefs.dblTapSingle = it }
+        addCheck("Nhấn đúp 2 lần liên tục → bật chế độ nhiều mục tiêu", IslandPrefs.dblTapMulti) { IslandPrefs.dblTapMulti = it }
+        val rotBtn = android.widget.Button(this)
+        rotBtn.text = "Cấp quyền sửa cài đặt hệ thống (để xoay màn hình)"
+        rotBtn.setOnClickListener {
+            if (Settings.System.canWrite(this)) {
+                Toast.makeText(this, "Đã cấp quyền", Toast.LENGTH_SHORT).show()
+            } else {
+                try {
+                    startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName")))
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Không mở được màn hình cấp quyền", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        box.addView(rotBtn)
         val tierInfo = TextView(this)
         tierInfo.text = tiersSummary()
         tierInfo.setPadding(0, dp(8), 0, 0)
@@ -1375,7 +1392,9 @@ class MainActivity : Activity() {
         box.addView(tierBtn)
         val note = TextView(this)
         note.text = "Khi bật cử chỉ, thanh Island nhận chạm cả lúc rảnh nên sẽ chắn vùng kéo thanh thông báo " +
-            "ngay dưới nó. Hãy vuốt xuống trên thanh Island để mở thanh thông báo, hoặc kéo từ hai bên cạnh."
+            "ngay dưới nó. Hãy vuốt xuống trên thanh Island để mở thanh thông báo, hoặc kéo từ hai bên cạnh.\n" +
+            "Khi bật nhấn đúp, chạm 1 lần sẽ chờ khoảng 0,3 giây để phân biệt với nhấn đúp. " +
+            "Nhấn đúp 2 lần liên tục = 4 lần chạm nhanh."
         note.textSize = 12f
         note.setPadding(0, dp(6), 0, 0)
         box.addView(note)

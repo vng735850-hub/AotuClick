@@ -98,6 +98,22 @@ object IslandPrefs {
         get() = gb("swipeShade", true)
         set(v) { pb("swipeShade", v) }
 
+    // ---------- v1.3.3: thêm cử chỉ ----------
+    /** Vuốt phải trên island: bật/tắt tự xoay màn hình. */
+    var swipeRotate: Boolean
+        get() = gb("swipeRot", true)
+        set(v) { pb("swipeRot", v) }
+
+    /** Nhấn đúp trên island: bật chế độ 1 mục tiêu. */
+    var dblTapSingle: Boolean
+        get() = gb("dblTap1", true)
+        set(v) { pb("dblTap1", v) }
+
+    /** Nhấn đúp 2 lần liên tục (4 chạm nhanh) trên island: bật chế độ nhiều mục tiêu. */
+    var dblTapMulti: Boolean
+        get() = gb("dblTap2", true)
+        set(v) { pb("dblTap2", v) }
+
     /** Các mốc giữ mặc định: giữ 3s → 1 phút, 5s → 2 phút, 7s → 5 phút, 10s → 10 phút. */
     fun defaultTiers(): List<IntArray> =
         listOf(intArrayOf(3, 1), intArrayOf(5, 2), intArrayOf(7, 5), intArrayOf(10, 10))

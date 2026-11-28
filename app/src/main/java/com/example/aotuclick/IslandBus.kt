@@ -7,11 +7,13 @@ import android.content.Context
 import android.content.Intent
 import android.media.session.MediaController
 import android.media.session.PlaybackState
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.os.VibrationEffect
+import android.provider.Settings
 import android.os.Vibrator
 import android.telecom.TelecomManager
 import android.widget.Toast
@@ -240,6 +242,61 @@ object IslandBus {
         Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
     }
 
+    /** Vuốt phải trên island: bật/tắt tự xoay màn hình (cần quyền "Sửa đổi cài đặt hệ thống"). */
+    private fun toggleAutoRotate(ctx: Context) {
+        try {
+            if (!Settings.System.canWrite(ctx)) {
+                toast(ctx, "Hãy cấp quyền \"Sửa đổi cài đặt hệ thống\" cho Nvp Klick để dùng cử chỉ xoay màn hình")
+                val i = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:" + ctx.packageName))
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(i)
+                return
+            }
+            val cr = ctx.contentResolver
+            val cur = Settings.System.getInt(cr, Settings.System.ACCELEROMETER_ROTATION, 0)
+            if (cur == 1) {
+                // Tắt xoay tự động: khóa về chiều dọc
+                Settings.System.putInt(cr, Settings.System.USER_ROTATION, 0)
+                Settings.System.putInt(cr, Settings.System.ACCELEROMETER_ROTATION, 0)
+                toast(ctx, "Đã tắt tự xoay màn hình")
+            } else {
+                Settings.System.putInt(cr, Settings.System.ACCELEROMETER_ROTATION, 1)
+                toast(ctx, "Đã bật tự xoay màn hình")
+            }
+        } catch (e: Throwable) {
+            toast(ctx, "Không đổi được chế độ xoay màn hình")
+        }
+    }
+
+    /** Nhấn đúp trên island: bật bảng nổi chế độ 1 mục tiêu (m = 1) hoặc nhiều mục tiêu (m = 2). */
+    private fun startPanelMode(ctx: Context, m: Int) {
+        try {
+            ClickStore.ensureLoaded(ctx)
+            val label = if (m == 1) "1 mục tiêu" else "nhiều mục tiêu"
+            if (!Settings.canDrawOverlays(ctx)) {
+                toast(ctx, "Hãy cấp quyền hiển thị trên ứng dụng khác trước")
+                return
+            }
+            val fs = FloatingService.instance
+            if (fs != null) {
+                if (ClickStore.panelMode == m) {
+                    toast(ctx, "Chế độ $label đang bật")
+                    return
+                }
+                ClickStore.panelMode = m
+                ClickStore.save(ctx)
+                fs.applyMode()
+            } else {
+                ClickStore.panelMode = m
+                ClickStore.save(ctx)
+                ctx.startForegroundService(Intent(ctx, FloatingService::class.java))
+            }
+            toast(ctx, "Đã bật chế độ $label")
+        } catch (e: Throwable) {
+            toast(ctx, "Không bật được chế độ bảng nổi")
+        }
+    }
+
     /** Xử lý nút bấm từ viên thuốc. */
     fun onAction(ctx: Context, id: String) {
         when (id) {
@@ -318,6 +375,9 @@ object IslandBus {
                 }
             }
             "stopwatch" -> gestureStopwatch()
+            "rotate" -> toggleAutoRotate(ctx)
+            "mode1" -> startPanelMode(ctx, 1)
+            "mode2" -> startPanelMode(ctx, 2)
             "shade" -> {
                 try {
                     AutoClickService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)

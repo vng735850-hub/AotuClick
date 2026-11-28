@@ -153,7 +153,41 @@ class DynamicIslandView(context: Context) : View(context) {
     private var shadeSw = false          // vuốt xuống → mở thanh thông báo
     private var tiers: List<IntArray> =
         listOf(intArrayOf(3, 1), intArrayOf(5, 2), intArrayOf(7, 5), intArrayOf(10, 10))  // giây giữ → phút
-    private val gestureAny: Boolean get() = swipeSw || holdTm || shadeSw
+    private var rotSw = false            // vuốt phải → bật/tắt tự xoay màn hình
+    private var dbl1 = false             // nhấn đúp → chế độ 1 mục tiêu
+    private var dbl2 = false             // nhấn đúp 2 lần liên tục → chế độ nhiều mục tiêu
+    private val gestureAny: Boolean get() = swipeSw || holdTm || shadeSw || rotSw || dbl1 || dbl2
+
+    // Đếm số lần chạm nhanh liên tiếp: 1 = bấm thường, 2 = nhấn đúp, 4 = nhấn đúp 2 lần liên tục
+    private val tapWindowMs = 320L
+    private var tapCount = 0
+    private val tapFire = Runnable {
+        val n = tapCount
+        tapCount = 0
+        when {
+            n == 1 -> performClick()
+            n == 2 && dbl1 -> {
+                buzz()
+                onAction?.invoke("mode1")
+            }
+            n == 4 && dbl2 -> {
+                buzz()
+                onAction?.invoke("mode2")
+            }
+            else -> {
+            }
+        }
+    }
+
+    private fun registerTap() {
+        if (!dbl1 && !dbl2) {
+            performClick()
+            return
+        }
+        tapCount++
+        ui.removeCallbacks(tapFire)
+        ui.postDelayed(tapFire, tapWindowMs)
+    }
 
     private val holdShowMs = 700L        // giữ quá thời gian này mới hiện xem trước hẹn giờ
     private var holdStart = 0L
@@ -653,10 +687,20 @@ class DynamicIslandView(context: Context) : View(context) {
     }
 
     /** Nhận cài đặt cử chỉ. tiers: danh sách (giây giữ, số phút hẹn giờ) đã sắp tăng dần theo giây. */
-    fun applyGestures(swipe: Boolean, hold: Boolean, shade: Boolean, list: List<IntArray>) {
+    fun applyGestures(
+        swipe: Boolean, hold: Boolean, shade: Boolean, list: List<IntArray>,
+        rotate: Boolean = false, doubleTap: Boolean = false, doubleTap2: Boolean = false
+    ) {
         swipeSw = swipe
         holdTm = hold
         shadeSw = shade
+        rotSw = rotate
+        dbl1 = doubleTap
+        dbl2 = doubleTap2
+        if (!doubleTap && !doubleTap2) {
+            ui.removeCallbacks(tapFire)
+            tapCount = 0
+        }
         tiers = if (list.isEmpty()) listOf(intArrayOf(3, 1)) else list
     }
 
@@ -870,6 +914,8 @@ class DynamicIslandView(context: Context) : View(context) {
         ticking = false
         ui.removeCallbacks(clock)
         ui.removeCallbacks(holdTick)
+        ui.removeCallbacks(tapFire)
+        tapCount = 0
         holdActive = false
     }
 
@@ -1035,6 +1081,11 @@ class DynamicIslandView(context: Context) : View(context) {
                             nudge(-1)
                             buzz()
                             onAction?.invoke("stopwatch")
+                        } else if (!ex && rotSw && d > 36f && Math.abs(dv) < 30f) {
+                            // Vuốt phải: bật/tắt tự xoay màn hình
+                            nudge(1)
+                            buzz()
+                            onAction?.invoke("rotate")
                         } else if (!ex && shadeSw && dv > 40f && Math.abs(d) < 24f) {
                             // Vuốt xuống: mở thanh thông báo (island đang chắn vùng kéo thanh trạng thái)
                             buzz()
@@ -1042,7 +1093,7 @@ class DynamicIslandView(context: Context) : View(context) {
                         } else if (Math.abs(d) > 36f) {
                             go(if (d < 0f) 1 else -1, true)
                         } else if (Math.abs(d) <= 8f && Math.abs(dv) <= 10f) {
-                            performClick()
+                            registerTap()
                         }
                     }
                 }
