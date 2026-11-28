@@ -3,9 +3,13 @@ package com.example.autoclick
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -29,6 +33,8 @@ import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity : Activity() {
 
@@ -47,6 +53,8 @@ class MainActivity : Activity() {
     private val cRed = Color.rgb(211, 47, 47)
     private val cBlue = Color.rgb(37, 99, 235)
     private val cGray: Int get() = AppTheme.gray
+    private val cPink = Color.rgb(216, 27, 96)
+    private val cOff = Color.rgb(84, 94, 110)
 
     private lateinit var container: FrameLayout
     private lateinit var themeSwitch: DayNightSwitch
@@ -54,8 +62,8 @@ class MainActivity : Activity() {
     private lateinit var navBar: NotchTabBar
     private var currentTab = 0
 
-    private lateinit var startBtn: IconView
-    private lateinit var startLabel: TextView
+    private lateinit var modeBtn1: TextView
+    private lateinit var modeBtn2: TextView
     private lateinit var overlayDot: View
     private lateinit var accDot: View
     private lateinit var overlayBtn: TextView
@@ -325,32 +333,23 @@ class MainActivity : Activity() {
         header.addView(titleCol)
         header.addView(themeSwitch)
 
-        // Thẻ nút Bắt đầu
-        val startCard = makeCard()
-        startCard.gravity = Gravity.CENTER_HORIZONTAL
-        startBtn = IconView(this, IconKind.PLAY)
-        val slp = LinearLayout.LayoutParams(dp(112), dp(112))
-        slp.setMargins(0, dp(6), 0, dp(10))
-        startBtn.layoutParams = slp
-        startBtn.setOnClickListener { onStartClicked() }
-        startLabel = textView("", 14f, cSub, false)
-        startLabel.gravity = Gravity.CENTER
-        startCard.addView(startBtn)
-        startCard.addView(startLabel)
+        // Thẻ chế độ 1 mục tiêu
+        val card1 = makeCard()
+        card1.addView(cardTitle("CHẾ ĐỘ 1 MỤC TIÊU"))
+        card1.addView(menuRow(MenuGlyph.GEAR, "Cài đặt") { goTab(2) })
+        modeBtn1 = modeButton(1)
+        card1.addView(modeBtn1)
+        home.addView(card1)
 
-        // Chọn kiểu bảng điều khiển
-        val modeTitle = textView("KIỂU BẢNG ĐIỀU KHIỂN", 12f, cSub, true)
-        modeTitle.setPadding(0, dp(14), 0, 0)
-        startCard.addView(modeTitle)
-        val modeRow = LinearLayout(this)
-        modeRow.orientation = LinearLayout.HORIZONTAL
-        mode1Btn = weightPill("Kiểu 1\nMột điểm chạm", cGray) { setPanelMode(1) }
-        mode2Btn = weightPill("Kiểu 2\nNhiều điểm: di chuyển + chạm", cGray) { setPanelMode(2) }
-        modeRow.addView(mode1Btn)
-        modeRow.addView(mode2Btn)
-        startCard.addView(modeRow)
-        updateModeUi()
-        home.addView(startCard)
+        // Thẻ chế độ nhiều mục tiêu
+        val card2 = makeCard()
+        card2.addView(cardTitle("CHẾ ĐỘ NHIỀU MỤC TIÊU"))
+        card2.addView(menuRow(MenuGlyph.GEAR, "Cài đặt") { goTab(2) })
+        card2.addView(menuRow(MenuGlyph.INFO, "Hướng dẫn") { showGuide() })
+        card2.addView(menuRow(MenuGlyph.WRENCH, "Quản lý cấu hình") { goTab(1) })
+        modeBtn2 = modeButton(2)
+        card2.addView(modeBtn2)
+        home.addView(card2)
 
         // Thẻ quyền
         val permCard = makeCard()
@@ -508,29 +507,6 @@ class MainActivity : Activity() {
         clp.setMargins(0, 0, 0, dp(12))
         clearBtn.layoutParams = clp
         scripts.addView(clearBtn)
-
-        // Hướng dẫn
-        val helpCard = makeCard()
-        val helpTitle = textView("Cách dùng", 16f, cText, true)
-        helpTitle.setPadding(0, 0, 0, dp(6))
-        helpCard.addView(helpTitle)
-        helpCard.addView(
-            textView(
-                "1. Cấp 2 quyền ở trên (hiển thị trên ứng dụng khác và Trợ năng).\n" +
-                    "2. Nhấn nút ▶ lớn để mở bảng điều khiển nổi.\n" +
-                    "3. Trên bảng nổi: ＋ thêm nút chạm, ➜ thêm nút kéo, － xoá nút cuối, ⚙ mở cài đặt, ˄ thu nhỏ thành bong bóng (chạm bong bóng để mở lại), ✕ đóng.\n" +
-                    "4. Kéo từng nút số tới vị trí cần chạm. Chạm vào nút (không kéo) để chọn kiểu Chạm / Chạm đúp / Giữ / Kéo, chỉnh độ trễ, đổi thứ tự hoặc xoá.\n" +
-                    "5. Kiểu Kéo có thêm chấm xanh ▸ là điểm kết thúc.\n" +
-                    "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng. Ô số dưới nút ▶ hiện thời gian đã chạy (giờ:phút:giây) và số lần thao tác (×N).\n" +
-                    "7. Mỗi kịch bản có danh sách nút riêng và điều kiện tự dừng riêng (số vòng, số phút, số lần thao tác).\n" +
-                    "8. Thông báo của app có nút Dừng, Mở bảng và Tắt để điều khiển nhanh khi bảng đang thu nhỏ.\n" +
-                    "9. Nút ⏸ trên bảng nổi để tạm dừng / chạy tiếp. Có thể đặt đếm ngược hoặc hẹn giờ ở phần Cài đặt; màn hình được giữ sáng trong lúc chờ và chạy.\n" +
-                    "10. Nhóm lặp: mở nút cuối của nhóm, điền nhóm bắt đầu từ nút số mấy và số lần lặp.\n" +
-                    "11. Có thể thêm ô \"Nvp Klick\" vào Cài đặt nhanh để bật bảng và chạy/dừng.",
-                13f, cSub, false
-            )
-        )
-        home.addView(helpCard)
 
         val pages = arrayOf(home, scripts, settings)
         val frame = FrameLayout(this)
@@ -731,22 +707,79 @@ class MainActivity : Activity() {
 
     // ---------- Xử lý ----------
 
-    private lateinit var mode1Btn: TextView
-    private lateinit var mode2Btn: TextView
-
-    private fun updateModeUi() {
-        val m = ClickStore.panelMode
-        mode1Btn.background = roundBg(if (m == 1) cBlue else cGray, 18, 0, 0)
-        mode2Btn.background = roundBg(if (m == 2) cBlue else cGray, 18, 0, 0)
-    }
-
     private fun setPanelMode(m: Int) {
         if (ClickStore.panelMode == m) return
         ClickStore.panelMode = m
         ClickStore.save(this)
-        updateModeUi()
         FloatingService.instance?.applyMode()
+        refreshStatus()
     }
+
+    private fun cardTitle(t: String): TextView {
+        val v = textView(t, 16f, cText, true)
+        v.setPadding(0, 0, 0, dp(6))
+        return v
+    }
+
+    /** Một dòng menu: biểu tượng xám bên trái, chữ bên phải, chạm để mở. */
+    private fun menuRow(kind: Int, label: String, onClick: () -> Unit): LinearLayout {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(0, dp(10), 0, dp(10))
+        val icon = MenuGlyph(this, kind)
+        icon.layoutParams = LinearLayout.LayoutParams(dp(28), dp(28))
+        row.addView(icon)
+        val tv = textView(label, 16f, cText, false)
+        val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        lp.setMargins(dp(16), 0, 0, 0)
+        tv.layoutParams = lp
+        row.addView(tv)
+        row.setOnClickListener { onClick() }
+        return row
+    }
+
+    /** Nút lớn màu hồng BẬT / TẮT của từng chế độ. */
+    private fun modeButton(mode: Int): TextView {
+        val b = TextView(this)
+        b.text = "BẬT"
+        b.setTextColor(Color.WHITE)
+        b.textSize = 16f
+        b.setTypeface(b.typeface, Typeface.BOLD)
+        b.gravity = Gravity.CENTER
+        b.background = roundBg(cPink, 8, 0, 0)
+        val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52))
+        lp.setMargins(0, dp(8), 0, dp(4))
+        b.layoutParams = lp
+        b.setOnClickListener { onModeButton(mode) }
+        return b
+    }
+
+    /** Chuyển sang tab khác (thanh tab dưới cũng trượt theo). */
+    private fun goTab(i: Int) {
+        navBar.selectTab(i)
+    }
+
+    private fun showGuide() {
+        AlertDialog.Builder(this, AppTheme.alertTheme)
+            .setTitle("Hướng dẫn")
+            .setMessage(guideText())
+            .setPositiveButton("Đóng", null)
+            .show()
+    }
+
+    private fun guideText(): String =
+        "1. Cấp 2 quyền ở Trang chủ (hiển thị trên ứng dụng khác và Trợ năng).\n" +
+            "2. Nhấn nút BẬT ở Trang chủ (Chế độ 1 mục tiêu hoặc Chế độ nhiều mục tiêu) để mở bảng điều khiển nổi; nhấn TẮT để đóng.\n" +
+            "3. Trên bảng nổi: ＋ thêm nút chạm, ➜ thêm nút kéo, － xoá nút cuối, ⚙ mở cài đặt, ˄ thu nhỏ thành bong bóng (chạm bong bóng để mở lại), ✕ đóng.\n" +
+            "4. Kéo từng nút số tới vị trí cần chạm. Chạm vào nút (không kéo) để chọn kiểu Chạm / Chạm đúp / Giữ / Kéo, chỉnh độ trễ, đổi thứ tự hoặc xoá.\n" +
+            "5. Kiểu Kéo có thêm chấm xanh ▸ là điểm kết thúc.\n" +
+            "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng. Ô số dưới nút ▶ hiện thời gian đã chạy (giờ:phút:giây) và số lần thao tác (×N).\n" +
+            "7. Mỗi kịch bản có danh sách nút riêng và điều kiện tự dừng riêng (số vòng, số phút, số lần thao tác).\n" +
+            "8. Thông báo của app có nút Dừng, Mở bảng và Tắt để điều khiển nhanh khi bảng đang thu nhỏ.\n" +
+            "9. Nút ⏸ trên bảng nổi để tạm dừng / chạy tiếp. Có thể đặt đếm ngược hoặc hẹn giờ ở phần Cài đặt; màn hình được giữ sáng trong lúc chờ và chạy.\n" +
+            "10. Nhóm lặp: mở nút cuối của nhóm, điền nhóm bắt đầu từ nút số mấy và số lần lặp.\n" +
+            "11. Có thể thêm ô \"Nvp Klick\" vào Cài đặt nhanh để bật bảng và chạy/dừng."
 
     private fun updateAlphaLabel() {
         alphaLabel.text = "Độ đậm bảng điều khiển nổi: ${ClickStore.panelAlpha}%"
@@ -767,11 +800,16 @@ class MainActivity : Activity() {
         ClickStore.save(this)
     }
 
-    private fun onStartClicked() {
+    private fun onModeButton(m: Int) {
         saveSettings()
-        if (FloatingService.instance != null) {
-            FloatingService.instance?.requestQuit()
-            Handler(Looper.getMainLooper()).postDelayed({ refreshStatus() }, 300L)
+        val svc = FloatingService.instance
+        if (svc != null) {
+            if (ClickStore.panelMode == m) {
+                svc.requestQuit()
+                Handler(Looper.getMainLooper()).postDelayed({ refreshStatus() }, 300L)
+            } else {
+                setPanelMode(m)
+            }
             return
         }
         if (!Settings.canDrawOverlays(this)) {
@@ -784,6 +822,8 @@ class MainActivity : Activity() {
             )
             return
         }
+        ClickStore.panelMode = m
+        ClickStore.save(this)
         startForegroundService(Intent(this, FloatingService::class.java))
         moveTaskToBack(true)
     }
@@ -801,13 +841,85 @@ class MainActivity : Activity() {
         accBtn.text = if (accOk) "Đã bật" else "Bật"
 
         val on = FloatingService.instance != null
-        startBtn.kind = if (on) IconKind.STOP else IconKind.PLAY
-        startBtn.background = ovalBg(if (on) cRed else cGreen)
-        startBtn.invalidate()
-        startLabel.text = if (on) {
-            "Bảng điều khiển đang bật\nNhấn để tắt"
-        } else {
-            "Nhấn để mở bảng điều khiển nổi"
+        val m = ClickStore.panelMode
+        val on1 = on && m == 1
+        val on2 = on && m == 2
+        modeBtn1.text = if (on1) "TẮT" else "BẬT"
+        modeBtn1.background = roundBg(if (on1) cOff else cPink, 8, 0, 0)
+        modeBtn2.text = if (on2) "TẮT" else "BẬT"
+        modeBtn2.background = roundBg(if (on2) cOff else cPink, 8, 0, 0)
+    }
+}
+
+/** Biểu tượng cho các dòng menu ở Trang chủ (bánh răng, chữ i, cờ lê), vẽ bằng code trên lưới 24x24. */
+class MenuGlyph(context: Context, private val kind: Int) : View(context) {
+
+    companion object {
+        const val GEAR = 0
+        const val INFO = 1
+        const val WRENCH = 2
+    }
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val tint = if (AppTheme.dark) Color.rgb(160, 166, 180) else Color.rgb(158, 158, 158)
+        val cut = AppTheme.card
+        canvas.save()
+        canvas.scale(width / 24f, height / 24f)
+        paint.style = Paint.Style.FILL
+        paint.color = tint
+        when (kind) {
+            GEAR -> {
+                path.reset()
+                path.fillType = Path.FillType.EVEN_ODD
+                var first = true
+                for (i in 0 until 8) {
+                    val base = Math.toRadians((i * 45).toDouble())
+                    val angles = doubleArrayOf(
+                        base - Math.toRadians(13.0), base - Math.toRadians(9.0),
+                        base + Math.toRadians(9.0), base + Math.toRadians(13.0)
+                    )
+                    val radii = floatArrayOf(7.6f, 10f, 10f, 7.6f)
+                    for (k in 0 until 4) {
+                        val px = 12f + radii[k] * cos(angles[k]).toFloat()
+                        val py = 12f + radii[k] * sin(angles[k]).toFloat()
+                        if (first) {
+                            path.moveTo(px, py)
+                            first = false
+                        } else {
+                            path.lineTo(px, py)
+                        }
+                    }
+                }
+                path.close()
+                path.addCircle(12f, 12f, 3.4f, Path.Direction.CW)
+                canvas.drawPath(path, paint)
+            }
+            INFO -> {
+                canvas.drawCircle(12f, 12f, 10f, paint)
+                paint.color = cut
+                canvas.drawCircle(12f, 7.6f, 1.5f, paint)
+                canvas.drawRoundRect(10.8f, 10.4f, 13.2f, 17.6f, 1f, 1f, paint)
+            }
+            else -> {
+                paint.style = Paint.Style.STROKE
+                paint.strokeCap = Paint.Cap.ROUND
+                paint.strokeWidth = 3.6f
+                canvas.drawLine(5.4f, 18.6f, 13.8f, 10.2f, paint)
+                paint.style = Paint.Style.FILL
+                canvas.drawCircle(16.4f, 7.6f, 4.6f, paint)
+                paint.color = cut
+                path.reset()
+                path.moveTo(17.4f, 6.6f)
+                path.lineTo(19.4f, 0.8f)
+                path.lineTo(23.2f, 4.6f)
+                path.close()
+                canvas.drawPath(path, paint)
+            }
         }
+        canvas.restore()
     }
 }
