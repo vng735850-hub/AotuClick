@@ -5,10 +5,13 @@ import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -122,6 +125,84 @@ class IslandNotificationListener : NotificationListenerService() {
         pushMedia()
     }
 
+    // ---------- Ảnh bìa nhạc thật ----------
+    private var bmpKey: String? = null
+    private var bmpCache: Bitmap? = null
+    private var uriArtKey: String? = null
+    private var uriArt: Bitmap? = null
+    private var uriLoading: String? = null
+
+    /**
+     * Lấy ảnh bìa từ metadata: ưu tiên ảnh bitmap, sau đó đường dẫn content:// hoặc file://.
+     * MediaController.getMetadata() tạo đối tượng mới mỗi lần gọi nên ở đây giữ lại ảnh cũ nếu
+     * bài hát không đổi, để island không phải xử lý lại ảnh.
+     */
+    private fun pickArt(md: MediaMetadata?): Bitmap? {
+        if (md == null) return null
+        val bmKeys = arrayOf(
+            MediaMetadata.METADATA_KEY_ALBUM_ART,
+            MediaMetadata.METADATA_KEY_ART,
+            MediaMetadata.METADATA_KEY_DISPLAY_ICON
+        )
+        for (k in bmKeys) {
+            val b = try { md.getBitmap(k) } catch (e: Throwable) { null }
+            if (b != null) {
+                val key = (md.getString(MediaMetadata.METADATA_KEY_TITLE) ?: "") + "|" +
+                    (md.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: "") + "|" +
+                    (md.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: "") + "|" + b.width + "x" + b.height
+                if (key == bmpKey && bmpCache != null) return bmpCache
+                bmpKey = key
+                bmpCache = b
+                return b
+            }
+        }
+        val uriKeys = arrayOf(
+            MediaMetadata.METADATA_KEY_ALBUM_ART_URI,
+            MediaMetadata.METADATA_KEY_ART_URI,
+            MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI
+        )
+        for (k in uriKeys) {
+            val s = md.getString(k)
+            if (s.isNullOrEmpty()) continue
+            if (s == uriArtKey) return uriArt
+            loadUriArt(s)
+            return null
+        }
+        return null
+    }
+
+    private fun loadUriArt(s: String) {
+        if (uriLoading == s) return
+        uriLoading = s
+        Thread {
+            val bmp = decodeUri(s)
+            main.post {
+                uriLoading = null
+                uriArtKey = s
+                uriArt = bmp
+                pushMedia()
+            }
+        }.start()
+    }
+
+    private fun decodeUri(s: String): Bitmap? {
+        return try {
+            val uri = Uri.parse(s)
+            val sch = uri.scheme ?: return null
+            if (sch != "content" && sch != "file" && sch != "android.resource") return null
+            val o = BitmapFactory.Options()
+            o.inJustDecodeBounds = true
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+            var sample = 1
+            while (o.outWidth / sample > 600 || o.outHeight / sample > 600) sample *= 2
+            val o2 = BitmapFactory.Options()
+            o2.inSampleSize = sample
+            contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o2) }
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
     /** Đẩy trạng thái nhạc hiện tại lên island (gọi lại khi island vừa bật). */
     fun pushMedia() {
         val v = IslandBus.view ?: return
@@ -147,6 +228,7 @@ class IslandNotificationListener : NotificationListenerService() {
             ?: md?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST) ?: ""
         val len = ((md?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L) / 1000L).toInt()
         val pos = ((st?.position ?: 0L) / 1000L).toInt()
+        v.setMusicArt(pickArt(md))
         v.setMusic(title, artist, state == PlaybackState.STATE_PLAYING, pos, if (len > 0) len else 0)
     }
 

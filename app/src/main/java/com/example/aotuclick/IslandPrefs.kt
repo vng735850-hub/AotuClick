@@ -72,6 +72,64 @@ object IslandPrefs {
         get() = gb("showNav", true)
         set(v) { pb("showNav", v) }
 
+    // ---------- v1.3.2: vị trí sát mép trên và cử chỉ trên thanh island ----------
+    /** Đặt island sát mép trên màn hình (chỉ có tác dụng khi island chạy bằng lớp phủ Trợ năng). */
+    var flushTop: Boolean
+        get() = gb("flushTop", true)
+        set(v) { pb("flushTop", v) }
+
+    /** Công tắc tổng cho mọi cử chỉ trên thanh island. */
+    var gestures: Boolean
+        get() = gb("gestures", true)
+        set(v) { pb("gestures", v) }
+
+    /** Vuốt trái trên island: tự bấm giờ. */
+    var swipeStopwatch: Boolean
+        get() = gb("swipeSw", true)
+        set(v) { pb("swipeSw", v) }
+
+    /** Giữ island: tự hẹn giờ theo thời gian giữ. */
+    var holdTimer: Boolean
+        get() = gb("holdTimer", true)
+        set(v) { pb("holdTimer", v) }
+
+    /** Vuốt xuống trên island: mở thanh thông báo (vì island đang chắn vùng kéo thanh trạng thái). */
+    var swipeShade: Boolean
+        get() = gb("swipeShade", true)
+        set(v) { pb("swipeShade", v) }
+
+    /** Các mốc giữ mặc định: giữ 3s → 1 phút, 5s → 2 phút, 7s → 5 phút, 10s → 10 phút. */
+    fun defaultTiers(): List<IntArray> =
+        listOf(intArrayOf(3, 1), intArrayOf(5, 2), intArrayOf(7, 5), intArrayOf(10, 10))
+
+    /** Danh sách mốc (giây giữ → số phút hẹn giờ), đã sắp tăng dần theo giây, không trùng giây. */
+    fun holdTiers(): List<IntArray> {
+        val raw = sp?.getString("holdTiers", null) ?: return defaultTiers()
+        val out = ArrayList<IntArray>()
+        for (part in raw.split(";")) {
+            val i = part.indexOf(':')
+            if (i <= 0) continue
+            val s = part.substring(0, i).toIntOrNull() ?: continue
+            val m = part.substring(i + 1).toIntOrNull() ?: continue
+            if (s in 1..60 && m in 1..180) out.add(intArrayOf(s, m))
+        }
+        out.sortBy { it[0] }
+        val clean = ArrayList<IntArray>()
+        for (t in out) {
+            if (clean.isEmpty() || clean[clean.size - 1][0] != t[0]) clean.add(t)
+        }
+        return if (clean.isEmpty()) defaultTiers() else clean
+    }
+
+    fun setHoldTiers(list: List<IntArray>) {
+        val sb = StringBuilder()
+        for (t in list) {
+            if (sb.isNotEmpty()) sb.append(';')
+            sb.append(t[0]).append(':').append(t[1])
+        }
+        sp?.edit()?.putString("holdTiers", sb.toString())?.apply()
+    }
+
     @Synchronized
     fun modeOf(pkg: String): Int = modes[pkg] ?: MODE_ISLAND
 

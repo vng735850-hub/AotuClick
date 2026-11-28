@@ -210,11 +210,15 @@ class AutoClickService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Island đang dùng lớp phủ thường thì chuyển sang lớp phủ Trợ năng (để nằm sát mép trên)
+        try { IslandService.instance?.reattach() } catch (e: Throwable) { }
     }
 
     override fun onUnbind(intent: android.content.Intent?): Boolean {
         stop()
         instance = null
+        // Cửa sổ Trợ năng sắp bị hệ thống gỡ: gắn lại island bằng lớp phủ thường
+        try { IslandService.instance?.reattach() } catch (e: Throwable) { }
         return super.onUnbind(intent)
     }
 

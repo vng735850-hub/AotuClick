@@ -1,5 +1,6 @@
 package com.example.autoclick
 
+import android.accessibilityservice.AccessibilityService
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
@@ -122,6 +123,20 @@ object IslandBus {
         val t = TimerItem(nextId++, true, 0, 0L, true, "")
         timers.add(t)
         shownId = t.id
+        startTicking()
+        pushTimer()
+        view?.focusTimer()
+    }
+
+    /** Vuốt trái trên island: bấm giờ. Đã có đồng hồ bấm giờ thì cho chạy tiếp (nếu đang dừng) và đưa lên hiển thị. */
+    fun gestureStopwatch() {
+        val cur = timers.firstOrNull { it.countUp }
+        if (cur == null) {
+            startStopwatch()
+            return
+        }
+        cur.running = true
+        shownId = cur.id
         startTicking()
         pushTimer()
         view?.focusTimer()
@@ -300,6 +315,20 @@ object IslandBus {
                     if (svc != null) {
                         if (svc.isPaused) svc.resume() else svc.pause()
                     }
+                }
+            }
+            "stopwatch" -> gestureStopwatch()
+            "shade" -> {
+                try {
+                    AutoClickService.instance?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+                } catch (e: Throwable) {
+                }
+            }
+            else -> {
+                // Giữ thanh island: "timerSet:<số phút>"
+                if (id.startsWith("timerSet:")) {
+                    val m = id.substring(9).toIntOrNull() ?: 0
+                    if (m > 0) startTimer(m * 60)
                 }
             }
         }

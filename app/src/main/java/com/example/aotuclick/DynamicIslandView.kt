@@ -3,9 +3,12 @@ package com.example.autoclick
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RadialGradient
@@ -142,6 +145,31 @@ class DynamicIslandView(context: Context) : View(context) {
     var alwaysShow = true
     var noticeMs = 5000L
     private var lastActive = false
+    private var lastTouch = false
+
+    // ---------- Cử chỉ trên thanh island (chỉnh trong Cài đặt của app) ----------
+    private var swipeSw = false          // vuốt trái → bấm giờ
+    private var holdTm = false           // giữ → hẹn giờ
+    private var shadeSw = false          // vuốt xuống → mở thanh thông báo
+    private var tiers: List<IntArray> =
+        listOf(intArrayOf(3, 1), intArrayOf(5, 2), intArrayOf(7, 5), intArrayOf(10, 10))  // giây giữ → phút
+    private val gestureAny: Boolean get() = swipeSw || holdTm || shadeSw
+
+    private val holdShowMs = 700L        // giữ quá thời gian này mới hiện xem trước hẹn giờ
+    private var holdStart = 0L
+    private var holdActive = false
+    private var holdIdx = -1
+    private var holdMin = 0
+
+    // ---------- Ảnh bìa nhạc thật ----------
+    private var artSrc: Bitmap? = null
+    private var artS: Bitmap? = null     // bản nhỏ (viên thuốc thu gọn)
+    private var artL: Bitmap? = null     // bản lớn (viên thuốc mở rộng)
+    private var artShS: BitmapShader? = null
+    private var artShL: BitmapShader? = null
+    private var accent = 0               // màu chủ đạo của ảnh bìa (0 = chưa có)
+    private val artPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val artMat = Matrix()
     private val noteCollapse = Runnable {
         if (noteOn && ex && acts[act] == "note") {
             ex = false
@@ -197,7 +225,7 @@ class DynamicIslandView(context: Context) : View(context) {
         Layer("pc", 206f, 36f), Layer("pe", 316f, 84f),
         Layer("vc", 206f, 36f), Layer("ve", 316f, 84f),
         Layer("bc", 206f, 36f), Layer("be", 316f, 84f),
-        Layer("ic", 206f, 36f)
+        Layer("ic", 206f, 36f), Layer("hc", 206f, 36f)
     )
 
     // ---------- Sơn ----------
@@ -299,6 +327,7 @@ class DynamicIslandView(context: Context) : View(context) {
     }
 
     private fun key(): String {
+        if (holdActive && !ex) return "hc"
         val a = acts[act]
         val c = when (a) {
             "timer" -> 't'
@@ -535,9 +564,11 @@ class DynamicIslandView(context: Context) : View(context) {
         val active = anyActive()
         if (!active) ex = false
         render(false, !reduceMotion() && (active || alwaysShow))
-        if (active != lastActive) {
-            lastActive = active
-            onActiveChanged?.invoke(active)
+        lastActive = active
+        val touch = wantsTouch()
+        if (touch != lastTouch) {
+            lastTouch = touch
+            onActiveChanged?.invoke(touch)
         }
         invalidate()
     }
@@ -621,6 +652,23 @@ class DynamicIslandView(context: Context) : View(context) {
         afterChange(null)
     }
 
+    /** Nhận cài đặt cử chỉ. tiers: danh sách (giây giữ, số phút hẹn giờ) đã sắp tăng dần theo giây. */
+    fun applyGestures(swipe: Boolean, hold: Boolean, shade: Boolean, list: List<IntArray>) {
+        swipeSw = swipe
+        holdTm = hold
+        shadeSw = shade
+        tiers = if (list.isEmpty()) listOf(intArrayOf(3, 1)) else list
+    }
+
+    /** Sát mép trên màn hình (không chừa khoảng trống phía trên viên thuốc). */
+    fun setFlushTop(on: Boolean) {
+        topPad = if (on) 0f else 4f
+        invalidate()
+    }
+
+    /** Cửa sổ chứa viên thuốc có cần nhận chạm không (có nội dung, hoặc rảnh nhưng có cử chỉ). */
+    fun wantsTouch(): Boolean = anyActive() || (gestureAny && alwaysShow)
+
     fun setSizeScale(f: Float) {
         density = baseDensity * f
         invalidate()
@@ -642,8 +690,89 @@ class DynamicIslandView(context: Context) : View(context) {
         if (!musicOn) return
         musicOn = false
         playing = false
+        setMusicArt(null)
         afterChange(null)
     }
+
+    /** Ảnh bìa thật của bài đang phát (null = dùng hình tạo sẵn). Gọi nhiều lần với cùng ảnh thì bỏ qua. */
+    fun setMusicArt(src: Bitmap?) {
+        if (src === artSrc) return
+        artSrc = src
+        artS = null
+        artL = null
+        artShS = null
+        artShL = null
+        if (src == null || src.isRecycled || src.width < 2 || src.height < 2) {
+            invalidate()
+            return
+        }
+        try {
+            val soft = if (src.config == Bitmap.Config.HARDWARE) src.copy(Bitmap.Config.ARGB_8888, false) else src
+            if (soft != null) {
+                val side = Math.min(soft.width, soft.height)
+                val sq = Bitmap.createBitmap(soft, (soft.width - side) / 2, (soft.height - side) / 2, side, side)
+                val big = Bitmap.createScaledBitmap(sq, 192, 192, true)
+                val small = Bitmap.createScaledBitmap(sq, 96, 96, true)
+                accent = dominantColor(small)
+                artL = big
+                artS = small
+                artShL = BitmapShader(big, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                artShS = BitmapShader(small, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            }
+        } catch (e: Throwable) {
+            artS = null
+            artL = null
+            artShS = null
+            artShL = null
+        }
+        invalidate()
+    }
+
+    /** Màu nổi bật nhất của ảnh: chia 12 nhóm màu, chuộng màu sặc sỡ và sáng, rồi làm sáng cho hợp nền đen. */
+    private fun dominantColor(b: Bitmap): Int {
+        val n = 24
+        val sm = Bitmap.createScaledBitmap(b, n, n, true)
+        val px = IntArray(n * n)
+        sm.getPixels(px, 0, n, 0, 0, n, n)
+        val hsv = FloatArray(3)
+        val wsum = FloatArray(12)
+        val rs = FloatArray(12)
+        val gs = FloatArray(12)
+        val bs = FloatArray(12)
+        var ar = 0f
+        var ag = 0f
+        var ab = 0f
+        var cnt = 0
+        for (p in px) {
+            if (Color.alpha(p) < 128) continue
+            Color.colorToHSV(p, hsv)
+            val w = hsv[1] * hsv[2] + 0.001f
+            val i = (hsv[0] / 30f).toInt().coerceIn(0, 11)
+            wsum[i] += w
+            rs[i] += Color.red(p) * w
+            gs[i] += Color.green(p) * w
+            bs[i] += Color.blue(p) * w
+            ar += Color.red(p)
+            ag += Color.green(p)
+            ab += Color.blue(p)
+            cnt++
+        }
+        if (cnt == 0) return cPink
+        var best = 0
+        for (i in 1 until 12) {
+            if (wsum[i] > wsum[best]) best = i
+        }
+        val useBucket = wsum[best] > 4f
+        val r = if (useBucket) rs[best] / wsum[best] else ar / cnt
+        val g = if (useBucket) gs[best] / wsum[best] else ag / cnt
+        val bl = if (useBucket) bs[best] / wsum[best] else ab / cnt
+        Color.colorToHSV(Color.rgb(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), bl.toInt().coerceIn(0, 255)), hsv)
+        if (hsv[1] > 0.12f) hsv[1] = Math.max(hsv[1], 0.55f)
+        hsv[2] = Math.max(hsv[2], 0.85f)
+        return Color.HSVToColor(hsv)
+    }
+
+    private fun accentColor(): Int = if (artS != null && accent != 0) accent else cPink
 
     /** state: 0 hết gọi, 1 đang đổ chuông, 2 đang nói chuyện. name rỗng thì giữ tên cũ. */
     fun setCall(state: Int, name: String, sec: Int) {
@@ -687,6 +816,7 @@ class DynamicIslandView(context: Context) : View(context) {
 
     override fun performClick(): Boolean {
         super.performClick()
+        if (acts[act] == "idle" && !ex) return true   // viên thuốc rảnh không có bản mở rộng
         if (ex && acts[act] == "note") {
             onAction?.invoke("open")
             noteOn = false
@@ -739,6 +869,8 @@ class DynamicIslandView(context: Context) : View(context) {
         nudgeAnim?.cancel()
         ticking = false
         ui.removeCallbacks(clock)
+        ui.removeCallbacks(holdTick)
+        holdActive = false
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
@@ -752,7 +884,7 @@ class DynamicIslandView(context: Context) : View(context) {
     }
 
     // ---------- Chạm ----------
-    private val topPad = 4f
+    private var topPad = 4f
     private var downX = 0f
     private var downBtn: String? = null
     private var bodyDown = false
@@ -762,7 +894,7 @@ class DynamicIslandView(context: Context) : View(context) {
     private fun islandCx(): Float = width / density / 2f + offX.value
 
     private fun inIsland(x: Float, y: Float): Boolean {
-        if (!lastActive) return false
+        if (!lastActive && !(gestureAny && alwaysShow)) return false
         val cx = islandCx()
         return x >= cx - wT.value / 2f && x <= cx + wT.value / 2f && y >= topPad && y <= topPad + hT.value
     }
@@ -776,6 +908,62 @@ class DynamicIslandView(context: Context) : View(context) {
         return null
     }
 
+    private var downY = 0f
+    private var dragDy = 0f
+
+    /** Rung nhẹ báo đã nhận cử chỉ / đã đạt một mốc hẹn giờ. */
+    private fun buzz() {
+        try {
+            performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        } catch (e: Throwable) {
+        }
+    }
+
+    private val holdTick = object : Runnable {
+        override fun run() {
+            if (!bodyDown || pressOff || ex || !holdTm) {
+                stopHold()
+                return
+            }
+            val el = SystemClock.uptimeMillis() - holdStart
+            var idx = -1
+            for (i in tiers.indices) {
+                if (el >= tiers[i][0] * 1000L) idx = i
+            }
+            if (el >= holdShowMs && !holdActive) {
+                holdActive = true
+                buzz()
+                render(false, !reduceMotion())
+            }
+            if (idx != holdIdx) {
+                holdIdx = idx
+                holdMin = if (idx >= 0) tiers[idx][1] else 0
+                if (idx >= 0) buzz()
+            }
+            invalidate()
+            ui.postDelayed(this, 80L)
+        }
+    }
+
+    private fun startHold() {
+        stopHold()
+        if (holdTm && !ex && tiers.isNotEmpty()) {
+            holdStart = SystemClock.uptimeMillis()
+            holdIdx = -1
+            holdMin = 0
+            ui.postDelayed(holdTick, 120L)
+        }
+    }
+
+    private fun stopHold() {
+        ui.removeCallbacks(holdTick)
+        val was = holdActive
+        holdActive = false
+        holdIdx = -1
+        holdMin = 0
+        if (was) render(false, !reduceMotion())
+    }
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val x = e.x / density
         val y = e.y / density
@@ -783,7 +971,9 @@ class DynamicIslandView(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 if (!inIsland(x, y)) return false
                 downX = x
+                downY = y
                 dragDx = 0f
+                dragDy = 0f
                 pressOff = false
                 nudgeAnim?.cancel()
                 val b = hit(x, y)
@@ -796,6 +986,7 @@ class DynamicIslandView(context: Context) : View(context) {
                     downBtn = null
                     bodyDown = true
                     press.to(1f, 120, DI_PRESS, 0, !reduceMotion())
+                    startHold()
                 }
                 parent?.requestDisallowInterceptTouchEvent(true)
                 return true
@@ -803,9 +994,12 @@ class DynamicIslandView(context: Context) : View(context) {
             MotionEvent.ACTION_MOVE -> {
                 if (bodyDown) {
                     dragDx = x - downX
-                    val r = Math.signum(dragDx) * Math.min(48f, Math.abs(dragDx) * 0.4f)
+                    dragDy = y - downY
+                    // Thu gọn: cửa sổ chỉ chừa ~17dp mỗi bên nên giới hạn độ kéo
+                    val lim = if (ex) 48f else 16f
+                    val r = Math.signum(dragDx) * Math.min(lim, Math.abs(dragDx) * 0.4f)
                     offX.set(r)
-                    if (Math.abs(dragDx) > 8f && !pressOff) {
+                    if ((Math.abs(dragDx) > 8f || Math.abs(dragDy) > 10f) && !pressOff) {
                         pressOff = true
                         press.to(0f, 450, DI_PRESS, 0, !reduceMotion())
                     }
@@ -825,10 +1019,29 @@ class DynamicIslandView(context: Context) : View(context) {
                     press.to(0f, 450, DI_PRESS, 0, !reduceMotion())
                     offX.to(0f, 550, DI_AT, 0, !reduceMotion())
                     val d = dragDx
+                    val dv = dragDy
+                    val shown = holdActive
+                    val mins = holdMin
+                    stopHold()
                     if (up) {
-                        if (Math.abs(d) > 36f) {
+                        if (shown && !pressOff) {
+                            // Thả tay sau khi giữ: đủ mốc thì hẹn giờ, chưa đủ mốc thì bỏ qua
+                            if (mins > 0) {
+                                buzz()
+                                onAction?.invoke("timerSet:" + mins)
+                            }
+                        } else if (!ex && swipeSw && d < -36f && Math.abs(dv) < 30f) {
+                            // Vuốt trái: tự bấm giờ
+                            nudge(-1)
+                            buzz()
+                            onAction?.invoke("stopwatch")
+                        } else if (!ex && shadeSw && dv > 40f && Math.abs(d) < 24f) {
+                            // Vuốt xuống: mở thanh thông báo (island đang chắn vùng kéo thanh trạng thái)
+                            buzz()
+                            onAction?.invoke("shade")
+                        } else if (Math.abs(d) > 36f) {
                             go(if (d < 0f) 1 else -1, true)
-                        } else if (Math.abs(d) <= 8f) {
+                        } else if (Math.abs(d) <= 8f && Math.abs(dv) <= 10f) {
                             performClick()
                         }
                     }
@@ -1037,7 +1250,42 @@ class DynamicIslandView(context: Context) : View(context) {
         }
     }
 
+    /** Vầng sáng mờ theo màu chủ đạo của ảnh bìa (chỉ khi có ảnh thật). */
+    private fun drawGlow(c: Canvas, cx: Float, cy: Float, r: Float, step: Float) {
+        if (artS == null) return
+        fill.shader = null
+        fill.color = rgba(accentColor(), 0.07f)
+        for (i in 0 until 5) {
+            c.drawCircle(cx, cy, r + i * step, fill)
+        }
+    }
+
+    private fun drawRealArt(c: Canvas, x: Float, y: Float, s: Float, r: Float, bmp: Bitmap, sh: BitmapShader) {
+        c.save()
+        c.translate(x, y)
+        rect.set(0f, 0f, s, s)
+        artMat.reset()
+        artMat.setScale(s / bmp.width, s / bmp.height)
+        sh.setLocalMatrix(artMat)
+        artPaint.shader = sh
+        c.drawRoundRect(rect, r, r, artPaint)
+        artPaint.shader = null
+        // Viền theo màu chủ đạo
+        stroke.color = rgba(accentColor(), 0.9f)
+        stroke.strokeWidth = if (s > 40f) 1.6f else 1.2f
+        rect.set(0.6f, 0.6f, s - 0.6f, s - 0.6f)
+        c.drawRoundRect(rect, r, r, stroke)
+        c.restore()
+    }
+
     private fun drawArt(c: Canvas, x: Float, y: Float, s: Float, r: Float, alt: Boolean) {
+        val big = s > 40f
+        val bmp = if (big) artL else artS
+        val bsh = if (big) artShL else artShS
+        if (bmp != null && bsh != null) {
+            drawRealArt(c, x, y, s, r, bmp, bsh)
+            return
+        }
         val k = s.toInt() * 2 + (if (alt) 1 else 0)
         val sh = artShaders.getOrPut(k) {
             val ang = Math.toRadians(if (alt) 170.0 else 160.0)
@@ -1107,7 +1355,7 @@ class DynamicIslandView(context: Context) : View(context) {
         val delays = floatArrayOf(0f, -300f, -500f, -100f)
         val still = reduceMotion()
         fill.shader = null
-        fill.color = cPink
+        fill.color = accentColor()
         val left = right - 19.5f
         for (i in 0 until 4) {
             val sc = if (still) {
@@ -1170,10 +1418,12 @@ class DynamicIslandView(context: Context) : View(context) {
                 drawText(c, fmt(tS), 138f, 49f, 38f, cOrange, Paint.Align.RIGHT, tfLight)
             }
             "mc" -> {
+                drawGlow(c, -83.5f, 18f, 12f, 3.5f)
                 drawArt(c, -95f, 6.5f, 23f, 6f, mAlt())
                 drawEq(c, 89f, 18f, 16f)
             }
             "me" -> {
+                drawGlow(c, -111f, 43f, 28f, 9f)
                 drawArt(c, -138f, 16f, 54f, 13f, mAlt())
                 val maxW = 106.5f - (-72f)
                 drawText(c, ellip(mTitle, 15.5f, tfBold, maxW), -72f, 34.5f, 15.5f, white, Paint.Align.LEFT, tfBold)
@@ -1188,7 +1438,7 @@ class DynamicIslandView(context: Context) : View(context) {
                 c.drawRoundRect(rect, 2.5f, 2.5f, fill)
                 val pw = 196f * progT.value.coerceIn(0f, 1f)
                 if (pw > 0.5f) {
-                    fill.color = Color.argb(224, 255, 255, 255)
+                    fill.color = if (artS != null) rgba(accentColor(), 0.95f) else Color.argb(224, 255, 255, 255)
                     rect.set(-98f, 87f, -98f + pw, 92f)
                     c.drawRoundRect(rect, 2.5f, 2.5f, fill)
                 }
@@ -1291,6 +1541,35 @@ class DynamicIslandView(context: Context) : View(context) {
                 drawText(c, if (batFull) "Pin đã đầy" else "Đang sạc", -82f, 31f, 12.5f, white55, Paint.Align.LEFT, tfReg)
                 drawText(c, Math.max(0, batPct).toString() + "%", -82f, 55f, 26f, cGreen, Paint.Align.LEFT, tfBold)
             }
+            "hc" -> {
+                // Xem trước hẹn giờ khi đang giữ: vòng tiến độ tới mốc kế + số phút đã đạt
+                val el = if (holdActive) SystemClock.uptimeMillis() - holdStart else 0L
+                var frac = 1f
+                for (i in tiers.indices) {
+                    val t = tiers[i][0] * 1000L
+                    if (el < t) {
+                        val p0 = if (i > 0) tiers[i - 1][0] * 1000L else 0L
+                        frac = (el - p0).toFloat() / (t - p0).toFloat()
+                        break
+                    }
+                }
+                val cx = -84f
+                val cy = 18f
+                val rr = 8.25f
+                stroke.strokeWidth = 2.38f
+                stroke.color = rgba(cOrange, 0.28f)
+                c.drawCircle(cx, cy, rr, stroke)
+                val sweep = 360f * frac.coerceIn(0f, 1f)
+                if (sweep > 0.5f) {
+                    stroke.color = cOrange
+                    rect.set(cx - rr, cy - rr, cx + rr, cy + rr)
+                    c.drawArc(rect, -90f, sweep, false, stroke)
+                }
+                val msg = if (holdMin > 0) "Hẹn giờ " + holdMin + " phút"
+                else "Giữ " + tiers[0][0] + "s → " + tiers[0][1] + " phút"
+                drawText(c, ellip(msg, 13f, tfBold, 112f), -68f, 18f, 13f, white, Paint.Align.LEFT, tfBold)
+                drawText(c, (el / 1000L).toString() + "s", 89f, 18f, 15f, cOrange, Paint.Align.RIGHT, tfBold)
+            }
             "ic" -> {
                 val col = if (batPct in 0..19) cOrange else white
                 drawRing(c, -84f, 18f, 8.25f, 2.38f, Math.max(0, batPct) / 100f, col)
@@ -1388,7 +1667,7 @@ class DynamicIslandView(context: Context) : View(context) {
         val eqOn = playing && !reduceMotion() &&
             layers.any { (it.key == "mc" || it.key == "me") && it.op.value > 0.003f }
         val ringOn = !reduceMotion() && layers.any { it.key == "cc" && it.op.value > 0.003f }
-        if (eqOn || ringOn) postInvalidateOnAnimation()
+        if (eqOn || ringOn || holdActive) postInvalidateOnAnimation()
     }
 
     init {

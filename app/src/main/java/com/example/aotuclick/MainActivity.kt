@@ -1219,6 +1219,94 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun tiersSummary(): String =
+        "Hiện tại: giữ " + IslandPrefs.holdTiers().joinToString(" · ") { it[0].toString() + "s → " + it[1].toString() + " phút" }
+
+    /** Hộp thoại chỉnh các mốc giữ thanh island → số phút hẹn giờ (tối đa 4 mốc). */
+    private fun showHoldTiers(onSaved: () -> Unit) {
+        IslandPrefs.init(this)
+        val cur = IslandPrefs.holdTiers()
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.setPadding(dp(20), dp(8), dp(20), dp(8))
+        val hint = TextView(this)
+        hint.text = "Giữ thanh Island đủ số giây rồi thả tay: island sẽ đếm ngược số phút tương ứng. " +
+            "Xóa trống cả hai ô để tắt mốc đó. Giây từ 1 đến 60, phút từ 1 đến 180."
+        box.addView(hint)
+        fun numField(v: String): EditText {
+            val e = EditText(this)
+            e.inputType = InputType.TYPE_CLASS_NUMBER
+            e.setText(v)
+            e.gravity = Gravity.CENTER
+            e.layoutParams = LinearLayout.LayoutParams(dp(70), LinearLayout.LayoutParams.WRAP_CONTENT)
+            return e
+        }
+        val secs = ArrayList<EditText>()
+        val mins = ArrayList<EditText>()
+        for (i in 0 until 4) {
+            val row = LinearLayout(this)
+            row.orientation = LinearLayout.HORIZONTAL
+            row.gravity = Gravity.CENTER_VERTICAL
+            row.setPadding(0, dp(8), 0, 0)
+            val sf = numField(if (i < cur.size) cur[i][0].toString() else "")
+            val mf = numField(if (i < cur.size) cur[i][1].toString() else "")
+            secs.add(sf)
+            mins.add(mf)
+            val t1 = TextView(this)
+            t1.text = "Giữ  "
+            val t2 = TextView(this)
+            t2.text = "  giây  →  đếm  "
+            val t3 = TextView(this)
+            t3.text = "  phút"
+            row.addView(t1)
+            row.addView(sf)
+            row.addView(t2)
+            row.addView(mf)
+            row.addView(t3)
+            box.addView(row)
+        }
+        val sv = ScrollView(this)
+        sv.addView(box)
+        val dlg = AlertDialog.Builder(this)
+            .setTitle("Mốc giữ → hẹn giờ")
+            .setView(sv)
+            .setPositiveButton("Lưu", null)
+            .setNeutralButton("Mặc định") { _, _ ->
+                IslandPrefs.setHoldTiers(IslandPrefs.defaultTiers())
+                IslandService.applySettings(this)
+                onSaved()
+            }
+            .setNegativeButton("Hủy", null)
+            .create()
+        dlg.show()
+        // Gán sau khi show để nhập sai thì hộp thoại không tự đóng
+        dlg.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            val list = ArrayList<IntArray>()
+            var bad = false
+            for (i in 0 until 4) {
+                val st = secs[i].text.toString().trim()
+                val mt = mins[i].text.toString().trim()
+                if (st.isEmpty() && mt.isEmpty()) continue
+                val sv2 = st.toIntOrNull()
+                val mv2 = mt.toIntOrNull()
+                if (sv2 == null || mv2 == null || sv2 !in 1..60 || mv2 !in 1..180) {
+                    bad = true
+                    break
+                }
+                list.add(intArrayOf(sv2, mv2))
+            }
+            if (bad || list.isEmpty()) {
+                Toast.makeText(this, "Giây từ 1-60, phút từ 1-180, cần ít nhất một mốc", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            IslandPrefs.setHoldTiers(list)
+            IslandService.applySettings(this)
+            onSaved()
+            Toast.makeText(this, "Đã lưu mốc hẹn giờ", Toast.LENGTH_SHORT).show()
+            dlg.dismiss()
+        }
+    }
+
     private fun showIslandSettings() {
         IslandPrefs.init(this)
         val box = LinearLayout(this)
@@ -1251,6 +1339,14 @@ class MainActivity : Activity() {
             cb.setOnCheckedChangeListener { _, b -> onSet(b) }
             box.addView(cb)
         }
+        fun addHeader(t: String) {
+            val h = TextView(this)
+            h.text = t
+            h.setTypeface(null, Typeface.BOLD)
+            h.setPadding(0, dp(18), 0, dp(2))
+            box.addView(h)
+        }
+        addCheck("Island sát mép trên màn hình (cần bật Trợ năng)", IslandPrefs.flushTop) { IslandPrefs.flushTop = it }
         addSeek("Hạ vị trí xuống", 0, 80, IslandPrefs.offsetDp, " dp") { IslandPrefs.offsetDp = it }
         addSeek("Kích thước", 70, 130, IslandPrefs.scalePct, "%") { IslandPrefs.scalePct = it }
         addSeek("Thời gian hiện thông báo", 2, 15, IslandPrefs.noticeSec, " giây") { IslandPrefs.noticeSec = it }
@@ -1263,6 +1359,27 @@ class MainActivity : Activity() {
         addCheck("Hiện trạng thái auto-click", IslandPrefs.showClick) { IslandPrefs.showClick = it }
         addCheck("Hiện tiến trình tải xuống", IslandPrefs.showProgress) { IslandPrefs.showProgress = it }
         addCheck("Hiện chỉ đường Google Maps", IslandPrefs.showNav) { IslandPrefs.showNav = it }
+
+        addHeader("Trợ năng thanh Island (cử chỉ)")
+        addCheck("Bật cử chỉ trên thanh Island", IslandPrefs.gestures) { IslandPrefs.gestures = it }
+        addCheck("Vuốt trái → tự bấm giờ", IslandPrefs.swipeStopwatch) { IslandPrefs.swipeStopwatch = it }
+        addCheck("Giữ thanh Island → tự hẹn giờ theo thời gian giữ", IslandPrefs.holdTimer) { IslandPrefs.holdTimer = it }
+        addCheck("Vuốt xuống → mở thanh thông báo", IslandPrefs.swipeShade) { IslandPrefs.swipeShade = it }
+        val tierInfo = TextView(this)
+        tierInfo.text = tiersSummary()
+        tierInfo.setPadding(0, dp(8), 0, 0)
+        box.addView(tierInfo)
+        val tierBtn = android.widget.Button(this)
+        tierBtn.text = "Chỉnh mốc giữ → thời gian hẹn giờ"
+        tierBtn.setOnClickListener { showHoldTiers { tierInfo.text = tiersSummary() } }
+        box.addView(tierBtn)
+        val note = TextView(this)
+        note.text = "Khi bật cử chỉ, thanh Island nhận chạm cả lúc rảnh nên sẽ chắn vùng kéo thanh thông báo " +
+            "ngay dưới nó. Hãy vuốt xuống trên thanh Island để mở thanh thông báo, hoặc kéo từ hai bên cạnh."
+        note.textSize = 12f
+        note.setPadding(0, dp(6), 0, 0)
+        box.addView(note)
+
         val sv = ScrollView(this)
         sv.addView(box)
         AlertDialog.Builder(this)

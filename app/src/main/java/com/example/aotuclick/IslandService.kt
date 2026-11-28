@@ -55,6 +55,13 @@ class IslandService : Service() {
         }
 
         fun applyViewPrefs(v: DynamicIslandView) {
+            val g = IslandPrefs.gestures
+            v.applyGestures(
+                g && IslandPrefs.swipeStopwatch,
+                g && IslandPrefs.holdTimer,
+                g && IslandPrefs.swipeShade,
+                IslandPrefs.holdTiers()
+            )
             v.applyPrefs(IslandPrefs.alwaysShow, IslandPrefs.noticeSec * 1000L)
         }
 
@@ -94,7 +101,7 @@ class IslandService : Service() {
                 val id = app.resources.getIdentifier("status_bar_height", "dimen", "android")
                 val sb = if (id > 0) app.resources.getDimensionPixelSize(id) else (24 * d).toInt()
                 val p = WindowManager.LayoutParams(
-                    (320 * d * sc).toInt(), (48 * d * sc).toInt(),
+                    (240 * d * sc).toInt(), (48 * d * sc).toInt(),
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
@@ -114,13 +121,18 @@ class IslandService : Service() {
                     p.flags = if (active) (p.flags and f.inv()) else (p.flags or f)
                     try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
                 }
+                if (v.wantsTouch()) {
+                    p.flags = p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                }
                 val shrink = Runnable {
+                    p.width = (240 * d * sc).toInt()
                     p.height = (48 * d * sc).toInt()
                     try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
                 }
                 v.onExpandChanged = { ex ->
                     fbHandler.removeCallbacks(shrink)
                     if (ex) {
+                        p.width = (320 * d * sc).toInt()
                         p.height = (186 * d * sc).toInt()
                         try { w.updateViewLayout(v, p) } catch (e: Throwable) { }
                     } else {
@@ -214,6 +226,18 @@ class IslandService : Service() {
     private fun yExtra(): Int = dp(IslandPrefs.offsetDp)
     private var isTall = false
 
+    /** true khi island chạy bằng lớp phủ Trợ năng (được vẽ đè lên cả thanh trạng thái). */
+    private var a11yMode = false
+
+    private fun flush(): Boolean = IslandPrefs.flushTop && a11yMode
+
+    /** Vị trí dọc: sát mép trên (lớp phủ Trợ năng) hoặc ngay dưới thanh trạng thái (lớp phủ thường). */
+    private fun yPos(): Int = if (flush()) yExtra() else topOffset() + yExtra()
+
+    /** Thu gọn: cửa sổ chỉ rộng hơn viên thuốc một chút để ít chắn thanh trạng thái bên dưới. */
+    private fun collapsedW(): Int = sdp(240)
+    private fun expandedW(): Int = sdp(320)
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -305,7 +329,7 @@ class IslandService : Service() {
 
     private fun buildParams(type: Int): WindowManager.LayoutParams {
         val p = WindowManager.LayoutParams(
-            sdp(320), sdp(48), type,
+            collapsedW(), sdp(48), type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -315,7 +339,7 @@ class IslandService : Service() {
             PixelFormat.TRANSLUCENT
         )
         p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        p.y = topOffset() + yExtra()
+        p.y = yPos()
         if (Build.VERSION.SDK_INT >= 30) {
             p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         } else if (Build.VERSION.SDK_INT >= 28) {
@@ -333,12 +357,15 @@ class IslandService : Service() {
             v.onExpandChanged = { expanded -> setTall(expanded) }
             v.onAction = { id -> IslandBus.onAction(applicationContext, id) }
             v.onActiveChanged = { active -> setTouchable(active) }
+            a11yMode = (type == WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
             v.setSizeScale(scale())
+            v.setFlushTop(flush())
             applyViewPrefs(v)
             val p = buildParams(type)
             w.addView(v, p)
             island = v
             lp = p
+            setTouchable(v.wantsTouch())
             IslandBus.view = v
             IslandNotificationListener.instance?.pushMedia()
             IslandBus.refresh()
@@ -358,9 +385,10 @@ class IslandService : Service() {
         val v = island ?: return
         val p = lp ?: return
         v.setSizeScale(scale())
-        p.width = sdp(320)
+        v.setFlushTop(flush())
+        p.width = if (isTall) expandedW() else collapsedW()
         p.height = if (isTall) sdp(186) else sdp(48)
-        p.y = topOffset() + yExtra()
+        p.y = yPos()
         try {
             wm.updateViewLayout(v, p)
         } catch (e: Throwable) {
@@ -471,17 +499,43 @@ class IslandService : Service() {
         val p = lp ?: return
         isTall = tall
         p.height = if (tall) sdp(186) else sdp(48)
+        p.width = if (tall) expandedW() else collapsedW()
         try {
             wm.updateViewLayout(v, p)
         } catch (e: Exception) {
         }
     }
 
+    /**
+     * Gắn lại viên thuốc khi dịch vụ Trợ năng vừa bật hoặc vừa tắt: ưu tiên lớp phủ Trợ năng
+     * (nằm sát mép trên, đè lên thanh trạng thái), không có thì dùng lớp phủ thường.
+     */
+    fun reattach() {
+        val old = island ?: return
+        try { wm.removeView(old) } catch (e: Throwable) { }
+        if (IslandBus.view === old) IslandBus.view = null
+        island = null
+        lp = null
+        isTall = false
+        handler.removeCallbacks(shrink)
+        val a11y = AutoClickService.instance
+        var mode = ""
+        if (a11y != null && tryAdd(a11y, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)) {
+            mode = "Trợ năng"
+        } else if (Settings.canDrawOverlays(this) &&
+            tryAdd(this, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        ) {
+            mode = "lớp phủ"
+        }
+        modeName = mode
+        log = if (mode.isEmpty()) "gắn lại island thất bại: $lastError" else "gắn lại island OK ($mode)"
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         val v = island ?: return
         val p = lp ?: return
-        p.y = topOffset() + yExtra()
+        p.y = yPos()
         try {
             wm.updateViewLayout(v, p)
         } catch (e: Exception) {
