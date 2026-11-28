@@ -67,6 +67,7 @@ class MainActivity : Activity() {
     private lateinit var navBar: NotchTabBar
     private var islandSwitch: Switch? = null
     private var islandSyncing = false
+    private var pendingIsland = false   // đang chờ người dùng cấp quyền hiển thị rồi tự bật
     private var currentTab = 0
 
     private lateinit var modeBtn1: TextView
@@ -1066,9 +1067,11 @@ class MainActivity : Activity() {
                     Uri.parse("package:$packageName")
                 )
             )
+            pendingIsland = true
             syncIslandSwitch(false)
             return
         }
+        pendingIsland = false
         ClickStore.islandOn = on
         ClickStore.save(this)
         if (on) IslandService.start(this) else IslandService.stop(this)
@@ -1084,6 +1087,15 @@ class MainActivity : Activity() {
 
     /** Khởi động lại dịch vụ nếu đang bật mà bị hệ thống tắt; cập nhật công tắc nếu đã tắt từ thông báo. */
     private fun syncIsland() {
+        if (pendingIsland && Settings.canDrawOverlays(this)) {
+            // Vừa cấp quyền xong: tự bật luôn, không bắt bật công tắc lần nữa
+            pendingIsland = false
+            ClickStore.islandOn = true
+            ClickStore.save(this)
+            IslandService.start(this)
+            syncIslandSwitch(true)
+            return
+        }
         if (ClickStore.islandOn && Settings.canDrawOverlays(this)) {
             if (IslandService.instance == null) IslandService.start(this)
         } else if (ClickStore.islandOn) {
