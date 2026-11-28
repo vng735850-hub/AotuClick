@@ -61,7 +61,7 @@ class IslandService : Service() {
         ClickStore.ensureLoaded(this)
         startAsForeground()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        if (!Settings.canDrawOverlays(this)) {
+        if (!Settings.canDrawOverlays(this) && AutoClickService.instance == null) {
             ClickStore.islandOn = false
             ClickStore.save(this)
             Toast.makeText(this, "Chưa có quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
@@ -137,13 +137,9 @@ class IslandService : Service() {
         return top + dp(2)
     }
 
-    private fun addIsland() {
-        val v = DynamicIslandView(this)
-        v.visibility = View.VISIBLE
-        v.onExpandChanged = { expanded -> setTall(expanded) }
+    private fun buildParams(type: Int): WindowManager.LayoutParams {
         val p = WindowManager.LayoutParams(
-            dp(320), dp(48),
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            dp(320), dp(48), type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
@@ -158,30 +154,53 @@ class IslandService : Service() {
         } else if (Build.VERSION.SDK_INT >= 28) {
             p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
-        island = v
-        lp = p
-        try {
-            wm.addView(v, p)
+        return p
+    }
+
+    private fun tryAdd(ctx: Context, type: Int): Boolean {
+        return try {
+            val w = ctx.getSystemService(WINDOW_SERVICE) as WindowManager
+            wm = w
+            val v = DynamicIslandView(ctx)
+            v.visibility = View.VISIBLE
+            v.onExpandChanged = { expanded -> setTall(expanded) }
+            val p = buildParams(type)
+            w.addView(v, p)
+            island = v
+            lp = p
+            true
         } catch (e: Throwable) {
-            Log.e("IslandService", "addView failed", e)
-            island = null
-            Toast.makeText(this, "Không hiện được Dynamic Island: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            Log.e("IslandService", "addView failed type=$type", e)
+            lastError = e.javaClass.simpleName + ": " + (e.message ?: "")
+            false
+        }
+    }
+
+    private var lastError = ""
+
+    private fun addIsland() {
+        // Ưu tiên lớp phủ Trợ năng (không bị MIUI/ColorOS... chặn), thiếu thì dùng lớp phủ thường
+        val a11y = AutoClickService.instance
+        var mode = ""
+        if (a11y != null && tryAdd(a11y, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)) {
+            mode = "Trợ năng"
+        } else if (Settings.canDrawOverlays(this) &&
+            tryAdd(this, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        ) {
+            mode = "lớp phủ"
+        }
+        if (mode.isEmpty()) {
+            Toast.makeText(
+                this,
+                "Không hiện được Dynamic Island. " + (if (lastError.isNotEmpty()) lastError else "Hãy bật dịch vụ Trợ năng của Nvp Klick."),
+                Toast.LENGTH_LONG
+            ).show()
             ClickStore.islandOn = false
             ClickStore.save(this)
             stopSelf()
             return
         }
-        // Kiểm tra sau 1 giây: nếu hệ thống (MIUI/ColorOS...) chặn thì báo cho người dùng
-        handler.postDelayed({
-            val iv = island
-            if (iv != null && !iv.isAttachedToWindow) {
-                Toast.makeText(
-                    this,
-                    "Máy đang chặn lớp phủ. Vào Cài đặt > Ứng dụng > Nvp Klick, bật \"Hiển thị cửa sổ bật lên khi chạy nền\" và cho chạy nền.",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
-        }, 1000L)
+        Toast.makeText(this, "Dynamic Island đã bật ($mode)", Toast.LENGTH_SHORT).show()
     }
 
     /** Mở rộng: cao ngay. Thu gọn: chờ hiệu ứng nảy xong rồi mới thu cửa sổ lại. */
