@@ -163,6 +163,9 @@ class DynamicIslandView(context: Context) : View(context) {
     private val nextPath = buildNext()
     private val playPath = buildPlay()
 
+    /** Báo cho cửa sổ chứa (dịch vụ lớp phủ) biết viên thuốc đang mở rộng hay thu gọn. */
+    var onExpandChanged: ((Boolean) -> Unit)? = null
+
     private var eqMs = 0L
     private var lastFrame = 0L
     private var kbIdx = -1
@@ -287,6 +290,7 @@ class DynamicIslandView(context: Context) : View(context) {
         hT.to(sz[1], 580, DI_SIZE, 0, animate)
         rT.to(sz[2], 580, DI_RADIUS, 0, animate)
         kbIdx = -1
+        onExpandChanged?.invoke(ex)
         contentDescription = label()
         if (announce) announceForAccessibility(label())
         invalidate()

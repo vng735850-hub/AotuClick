@@ -65,8 +65,8 @@ class MainActivity : Activity() {
     private lateinit var themeSwitch: DayNightSwitch
     private val pageScrolls = arrayOfNulls<ScrollView>(4)
     private lateinit var navBar: NotchTabBar
-    private lateinit var dynIsland: DynamicIslandView
-    private lateinit var islandSpacer: View
+    private var islandSwitch: Switch? = null
+    private var islandSyncing = false
     private var currentTab = 0
 
     private lateinit var modeBtn1: TextView
@@ -254,10 +254,6 @@ class MainActivity : Activity() {
         // Thanh tab dưới: Trang chủ · Kịch bản · Công cụ · Cài đặt (giữ một đối tượng để hiệu ứng không bị ngắt)
         navBar = NotchTabBar(this, listOf("Trang chủ", "Kịch bản", "Công cụ", "Cài đặt"))
         navBar.onSelect = { i -> showTab(i) }
-
-        // Dynamic Island (bật/tắt ở trang Công cụ), giữ một đối tượng để trạng thái không mất khi dựng lại giao diện
-        dynIsland = DynamicIslandView(this)
-        islandSpacer = View(this)
 
         container = FrameLayout(this)
         setContentView(container)
@@ -547,7 +543,7 @@ class MainActivity : Activity() {
         islandTxt.orientation = LinearLayout.VERTICAL
         islandTxt.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         islandTxt.addView(textView("Dynamic Island", 16f, cText, false))
-        val islandHint = textView("Hiện viên thuốc đen ở đầu màn hình app. Chạm để mở rộng, vuốt ngang để đổi giữa hẹn giờ, nhạc và cuộc gọi.", 13f, cSub, false)
+        val islandHint = textView("Hiện viên thuốc đen nổi trên mọi app, ngay dưới thanh trạng thái. Chạm để mở rộng, vuốt ngang để đổi giữa hẹn giờ, nhạc và cuộc gọi. Cần quyền hiển thị trên ứng dụng khác.", 13f, cSub, false)
         islandHint.setPadding(0, dp(2), 0, 0)
         islandTxt.addView(islandHint)
         islandRow.addView(islandTxt)
@@ -560,11 +556,9 @@ class MainActivity : Activity() {
         val swLp2 = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         swLp2.setMargins(dp(12), 0, 0, 0)
         islandSw.layoutParams = swLp2
+        islandSwitch = islandSw
         islandSw.setOnCheckedChangeListener { _, on ->
-            ClickStore.islandOn = on
-            ClickStore.save(this@MainActivity)
-            if (!on) dynIsland.collapseNow()
-            applyIslandVisibility()
+            if (!islandSyncing) setIsland(on)
         }
         islandRow.setOnClickListener { islandSw.toggle() }
         islandRow.addView(islandSw)
@@ -591,9 +585,6 @@ class MainActivity : Activity() {
         }
 
         (navBar.parent as? ViewGroup)?.removeView(navBar)
-        // Chỗ trống phía trên tiêu đề để viên thuốc không đè lên chữ khi bật Dynamic Island
-        islandSpacer = View(this)
-        col.addView(islandSpacer, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(14)))
         col.addView(header)
         col.addView(
             frame,
@@ -614,17 +605,6 @@ class MainActivity : Activity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
-        // Dynamic Island nổi phía trên cùng, chỉ nhận chạm trong vùng viên thuốc
-        container.addView(
-            dynIsland,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                dp(190),
-                Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            )
-        )
-        applyIslandVisibility()
-        dynIsland.invalidate()
         navBar.setSelectedIndex(currentTab)
         navBar.applyTheme()
 
@@ -636,6 +616,7 @@ class MainActivity : Activity() {
         super.onResume()
         refreshStatus()
         if (::profileName.isInitialized) refreshProfileUi()
+        syncIsland()
     }
 
     override fun onPause() {
@@ -1075,13 +1056,44 @@ class MainActivity : Activity() {
         return b
     }
 
-    /** Hiện/ẩn Dynamic Island và chỗ trống phía trên tiêu đề theo công tắc ở trang Công cụ. */
-    private fun applyIslandVisibility() {
-        val on = ClickStore.islandOn
-        dynIsland.visibility = if (on) View.VISIBLE else View.GONE
-        islandSpacer.visibility = if (on) View.VISIBLE else View.GONE
+    /** Bật/tắt Dynamic Island nổi trên mọi app. Thiếu quyền hiển thị trên ứng dụng khác thì mở màn hình cấp quyền. */
+    private fun setIsland(on: Boolean) {
+        if (on && !Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "Hãy cấp quyền hiển thị trên ứng dụng khác trước", Toast.LENGTH_LONG).show()
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+            )
+            syncIslandSwitch(false)
+            return
+        }
+        ClickStore.islandOn = on
+        ClickStore.save(this)
+        if (on) IslandService.start(this) else IslandService.stop(this)
     }
 
+    /** Đặt lại công tắc theo trạng thái thật mà không kích hoạt lại sự kiện. */
+    private fun syncIslandSwitch(checked: Boolean) {
+        val sw = islandSwitch ?: return
+        islandSyncing = true
+        sw.isChecked = checked
+        islandSyncing = false
+    }
+
+    /** Khởi động lại dịch vụ nếu đang bật mà bị hệ thống tắt; cập nhật công tắc nếu đã tắt từ thông báo. */
+    private fun syncIsland() {
+        if (ClickStore.islandOn && Settings.canDrawOverlays(this)) {
+            if (IslandService.instance == null) IslandService.start(this)
+        } else if (ClickStore.islandOn) {
+            ClickStore.islandOn = false
+            ClickStore.save(this)
+        }
+        syncIslandSwitch(ClickStore.islandOn)
+    }
+
+    /** Chuyển sang tab khác (thanh tab dưới cũng trượt theo). */
     /** Chuyển sang tab khác (thanh tab dưới cũng trượt theo). */
     private fun goTab(i: Int) {
         navBar.selectTab(i)
