@@ -16,8 +16,12 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
+import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
+import android.widget.Toast
 
 /**
  * Dynamic Island nổi trên mọi app (lớp phủ toàn hệ thống), đặt ngay dưới thanh trạng thái.
@@ -58,6 +62,9 @@ class IslandService : Service() {
         startAsForeground()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         if (!Settings.canDrawOverlays(this)) {
+            ClickStore.islandOn = false
+            ClickStore.save(this)
+            Toast.makeText(this, "Chưa có quyền hiển thị trên ứng dụng khác", Toast.LENGTH_LONG).show()
             stopSelf()
             return
         }
@@ -110,34 +117,71 @@ class IslandService : Service() {
         }
     }
 
-    /** Đặt viên thuốc ngay dưới thanh trạng thái (thanh trạng thái nằm trên lớp phủ nên không nhận chạm nếu đặt chồng lên). */
+    /** Chiều cao vùng trên cùng cần tránh (thanh trạng thái / tai thỏ), tính từ mép trên màn hình. */
     private fun topOffset(): Int {
-        val id = resources.getIdentifier("status_bar_height", "dimen", "android")
-        val sb = if (id > 0) resources.getDimensionPixelSize(id) else dp(24)
-        return sb + dp(2)
+        var top = 0
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                top = wm.currentWindowMetrics.windowInsets
+                    .getInsetsIgnoringVisibility(
+                        WindowInsets.Type.statusBars() or WindowInsets.Type.displayCutout()
+                    ).top
+            } catch (e: Exception) {
+                top = 0
+            }
+        }
+        if (top <= 0) {
+            val id = resources.getIdentifier("status_bar_height", "dimen", "android")
+            top = if (id > 0) resources.getDimensionPixelSize(id) else dp(24)
+        }
+        return top + dp(2)
     }
 
     private fun addIsland() {
         val v = DynamicIslandView(this)
+        v.visibility = View.VISIBLE
         v.onExpandChanged = { expanded -> setTall(expanded) }
         val p = WindowManager.LayoutParams(
             dp(320), dp(48),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
         )
         p.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         p.y = topOffset()
+        if (Build.VERSION.SDK_INT >= 30) {
+            p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        } else if (Build.VERSION.SDK_INT >= 28) {
+            p.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         island = v
         lp = p
         try {
             wm.addView(v, p)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            Log.e("IslandService", "addView failed", e)
             island = null
+            Toast.makeText(this, "Không hiện được Dynamic Island: ${e.javaClass.simpleName}", Toast.LENGTH_LONG).show()
+            ClickStore.islandOn = false
+            ClickStore.save(this)
             stopSelf()
+            return
         }
+        // Kiểm tra sau 1 giây: nếu hệ thống (MIUI/ColorOS...) chặn thì báo cho người dùng
+        handler.postDelayed({
+            val iv = island
+            if (iv != null && !iv.isAttachedToWindow) {
+                Toast.makeText(
+                    this,
+                    "Máy đang chặn lớp phủ. Vào Cài đặt > Ứng dụng > Nvp Klick, bật \"Hiển thị cửa sổ bật lên khi chạy nền\" và cho chạy nền.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }, 1000L)
     }
 
     /** Mở rộng: cao ngay. Thu gọn: chờ hiệu ứng nảy xong rồi mới thu cửa sổ lại. */
