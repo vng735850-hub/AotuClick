@@ -63,6 +63,8 @@ class FloatingService : Service() {
     private lateinit var bubbleView: IconView
     private lateinit var bubbleLp: WindowManager.LayoutParams
     private val items = mutableListOf<Item>()
+    private var linesView: SwipeLinesView? = null
+    private var linesLp: WindowManager.LayoutParams? = null
 
     private var running = false
     private var destroyed = false
@@ -189,12 +191,54 @@ class FloatingService : Service() {
 
     private fun teardownViews() {
         clearMarkers()
+        removeLinesView()
         panelView?.let { try { wm.removeView(it) } catch (e: Exception) {} }
         if (::bubbleView.isInitialized) {
             try { wm.removeView(bubbleView) } catch (e: Exception) {}
         }
         panelView = null
         minimized = false
+    }
+
+    // ---------- Dây nối N → P của nút Kéo ----------
+
+    /**
+     * Thêm lớp dây toàn màn hình. Phải thêm TRƯỚC bảng và các chấm để dây nằm dưới chúng.
+     * Cửa sổ không nhận chạm và để độ mờ <= 0.8 vì Android 12+ chặn chạm xuyên qua
+     * cửa sổ che có độ mờ cao hơn mức đó.
+     */
+    private fun addLinesView() {
+        removeLinesView()
+        val lp = overlayParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            0, 0
+        )
+        lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        lp.alpha = 0.79f
+        val v = SwipeLinesView(this)
+        v.segments = {
+            val mh = markerSize / 2f
+            val eh = endSize / 2f
+            items.mapNotNull { item ->
+                val elp = item.endLp ?: return@mapNotNull null
+                SwipeLinesView.Seg(
+                    item.lp.x + mh, item.lp.y + mh,
+                    elp.x + eh, elp.y + eh,
+                    mh, eh
+                )
+            }
+        }
+        v.visibility = if (markersHidden) View.INVISIBLE else View.VISIBLE
+        try { wm.addView(v, lp) } catch (e: Exception) {}
+        linesView = v
+        linesLp = lp
+    }
+
+    private fun removeLinesView() {
+        linesView?.let { try { wm.removeView(it) } catch (e: Exception) {} }
+        linesView = null
+        linesLp = null
     }
 
     /** Đổi màu bảng nổi theo chế độ sáng/tối hiện tại của app. */
@@ -299,6 +343,7 @@ class FloatingService : Service() {
 
     private fun setup() {
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        addLinesView()
         // Xoay ngang: bảng nằm ngang cho vừa chiều cao màn hình
         val horiz = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -458,6 +503,7 @@ class FloatingService : Service() {
         ClickStore.actions.forEachIndexed { i, a ->
             if (!single || i == 0) addMarker(i, a)
         }
+        linesView?.invalidate()
     }
 
     /** Kiểu 1: luôn có đúng một điểm chạm (tạo nếu chưa có, ép về loại Chạm). */
@@ -487,6 +533,7 @@ class FloatingService : Service() {
 
     private fun applyMarkersVisibility() {
         val vis = if (markersHidden) View.INVISIBLE else View.VISIBLE
+        linesView?.visibility = vis
         items.forEach {
             it.view.visibility = vis
             it.endView?.visibility = vis
@@ -537,7 +584,10 @@ class FloatingService : Service() {
         val view = makeCircle(n, a.type.color, markerSize)
         val lp = overlayParams(markerSize, markerSize, (a.x - half).toInt(), (a.y - half).toInt())
         attachTouch(view, lp, view,
-            onMove = { x, y -> a.x = x + half.toFloat(); a.y = y + half.toFloat() },
+            onMove = { x, y ->
+                a.x = x + half.toFloat(); a.y = y + half.toFloat()
+                linesView?.invalidate()
+            },
             onClick = { openEditor(index) })
         if (running) lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         wm.addView(view, lp)
@@ -546,10 +596,13 @@ class FloatingService : Service() {
         var endLp: WindowManager.LayoutParams? = null
         if (a.type == ActionType.SWIPE) {
             val eh = endSize / 2
-            val ev = makeCircle("$n▸", Color.rgb(30, 136, 229), endSize)
+            val ev = makeCircle("P", Color.rgb(30, 136, 229), endSize)
             val elp = overlayParams(endSize, endSize, (a.x2 - eh).toInt(), (a.y2 - eh).toInt())
             attachTouch(ev, elp, ev,
-                onMove = { x, y -> a.x2 = x + eh.toFloat(); a.y2 = y + eh.toFloat() },
+                onMove = { x, y ->
+                    a.x2 = x + eh.toFloat(); a.y2 = y + eh.toFloat()
+                    linesView?.invalidate()
+                },
                 onClick = { openEditor(index) })
             if (running) elp.flags = elp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             wm.addView(ev, elp)
@@ -557,6 +610,7 @@ class FloatingService : Service() {
             endLp = elp
         }
         items.add(Item(a, view, lp, endView, endLp))
+        linesView?.invalidate()
         if (markersHidden) {
             view.visibility = View.INVISIBLE
             endView?.visibility = View.INVISIBLE
@@ -592,7 +646,7 @@ class FloatingService : Service() {
         ClickStore.save(this)
         addMarker(ClickStore.actions.size - 1, a)
         if (type == ActionType.SWIPE) {
-            Toast.makeText(this, "Kéo chấm xanh ▸ tới nơi cần thả", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Kéo chấm P (điểm dừng) tới nơi cần thả", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -898,6 +952,7 @@ class FloatingService : Service() {
         if (!userQuit) postStoppedNotice()
         instance = null
         clearMarkers()
+        removeLinesView()
         panelView?.let { try { wm.removeView(it) } catch (e: Exception) {} }
         if (::bubbleView.isInitialized) {
             try { wm.removeView(bubbleView) } catch (e: Exception) {}

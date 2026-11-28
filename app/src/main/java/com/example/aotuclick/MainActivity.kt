@@ -773,7 +773,7 @@ class MainActivity : Activity() {
             "2. Nhấn nút BẬT ở Trang chủ (Chế độ 1 mục tiêu hoặc Chế độ nhiều mục tiêu) để mở bảng điều khiển nổi; nhấn TẮT để đóng.\n" +
             "3. Trên bảng nổi: ＋ thêm nút chạm, ➜ thêm nút kéo, － xoá nút cuối, ⚙ mở cài đặt, ˄ thu nhỏ thành bong bóng (chạm bong bóng để mở lại), ✕ đóng.\n" +
             "4. Kéo từng nút số tới vị trí cần chạm. Chạm vào nút (không kéo) để chọn kiểu Chạm / Chạm đúp / Giữ / Kéo, chỉnh độ trễ, đổi thứ tự hoặc xoá.\n" +
-            "5. Kiểu Kéo có thêm chấm xanh ▸ là điểm kết thúc.\n" +
+            "5. Kiểu Kéo: chấm số N là điểm bắt đầu, chấm P là điểm dừng; có dây nối và mũi tên chỉ hướng từ N tới P.\n" +
             "6. Nhấn nút ▶ trên bảng nổi để chạy, nhấn lại để dừng. Ô số dưới nút ▶ hiện thời gian đã chạy (giờ:phút:giây) và số lần thao tác (×N).\n" +
             "7. Mỗi kịch bản có danh sách nút riêng và điều kiện tự dừng riêng (số vòng, số phút, số lần thao tác).\n" +
             "8. Thông báo của app có nút Dừng, Mở bảng và Tắt để điều khiển nhanh khi bảng đang thu nhỏ.\n" +

@@ -83,7 +83,7 @@ class EditActionActivity : Activity() {
                 ActionType.TAP -> "Chạm (1 lần)"
                 ActionType.DOUBLE -> "Chạm đúp"
                 ActionType.HOLD -> "Giữ (nhấn giữ)"
-                ActionType.SWIPE -> "Kéo (từ chấm số → chấm xanh ▸)"
+                ActionType.SWIPE -> "Kéo (từ chấm số N → chấm P là điểm dừng)"
             }
             radioIds[rb.id] = t
             group.addView(rb)
