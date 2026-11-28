@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -29,6 +30,14 @@
         <!-- Hộp thoại chỉnh sửa từng nút (mở từ bảng nổi) -->
         <activity
             android:name=".EditActionActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Material.Light.Dialog" />
+
+        <!-- Hộp nhập chữ trả lời nhanh tin nhắn từ island -->
+        <activity
+            android:name=".ReplyActivity"
             android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
