@@ -37,7 +37,24 @@ class IslandService : Service() {
         private const val ACTION_QUIT = "com.example.autoclick.ISLAND_QUIT"
 
         fun start(ctx: Context) {
-            ctx.startForegroundService(Intent(ctx, IslandService::class.java))
+            installCrashLogger(ctx)
+            log = "đã gọi startForegroundService"
+            try {
+                ctx.startForegroundService(Intent(ctx, IslandService::class.java))
+            } catch (e: Throwable) {
+                log = "startForegroundService lỗi: $e"
+            }
+        }
+
+        private const val DIAG_PREF = "island_diag"
+        @Volatile private var appCtx: Context? = null
+
+        /** Ghi lỗi crash vào bộ nhớ để xem lại sau khi tiến trình khởi động lại. */
+        fun installCrashLogger(ctx: Context) {
+            appCtx = ctx.applicationContext
+            val prev = Thread.getDefaultUncaughtExceptionHandler()
+            if (prev is IslandCrashLogger) return
+            Thread.setDefaultUncaughtExceptionHandler(IslandCrashLogger(ctx.applicationContext, prev))
         }
 
         fun stop(ctx: Context) {
@@ -45,6 +62,13 @@ class IslandService : Service() {
         }
 
         @Volatile var log: String = "chưa có lần chạy nào"
+            set(v) {
+                field = v
+                try {
+                    appCtx?.getSharedPreferences(DIAG_PREF, Context.MODE_PRIVATE)?.edit()?.putString("log", v)?.commit()
+                } catch (e: Throwable) {
+                }
+            }
 
         fun report(ctx: Context): String {
             val svc = instance
@@ -60,7 +84,9 @@ class IslandService : Service() {
             sb.append("Kích thước view: ").append(v?.width).append("x").append(v?.height).append("\n")
             sb.append("Cửa sổ hiển thị: ").append(v?.windowVisibility == View.VISIBLE).append("\n")
             sb.append("Chế độ: ").append(svc?.modeName ?: "-").append("\n")
-            sb.append("Nhật ký: ").append(log)
+            val pf = ctx.applicationContext.getSharedPreferences(DIAG_PREF, Context.MODE_PRIVATE)
+            sb.append("Nhật ký: ").append(pf.getString("log", "(trống)")).append("\n")
+            sb.append("Lỗi crash gần nhất: ").append(pf.getString("crash", "không có"))
             return sb.toString()
         }
     }
@@ -270,5 +296,22 @@ class IslandService : Service() {
         island = null
         instance = null
         super.onDestroy()
+    }
+}
+
+/** Bắt mọi lỗi làm sập tiến trình, lưu lại stack trace rồi chuyển tiếp cho trình xử lý gốc. */
+private class IslandCrashLogger(
+    private val app: Context,
+    private val prev: Thread.UncaughtExceptionHandler?
+) : Thread.UncaughtExceptionHandler {
+    override fun uncaughtException(t: Thread, e: Throwable) {
+        try {
+            val sw = java.io.StringWriter()
+            e.printStackTrace(java.io.PrintWriter(sw))
+            app.getSharedPreferences("island_diag", Context.MODE_PRIVATE).edit()
+                .putString("crash", sw.toString().take(1200)).commit()
+        } catch (x: Throwable) {
+        }
+        prev?.uncaughtException(t, e)
     }
 }
