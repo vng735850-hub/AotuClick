@@ -5,6 +5,7 @@ import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.res.ColorStateList
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Canvas
@@ -33,6 +34,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -61,8 +63,10 @@ class MainActivity : Activity() {
 
     private lateinit var container: FrameLayout
     private lateinit var themeSwitch: DayNightSwitch
-    private val pageScrolls = arrayOfNulls<ScrollView>(3)
+    private val pageScrolls = arrayOfNulls<ScrollView>(4)
     private lateinit var navBar: NotchTabBar
+    private lateinit var dynIsland: DynamicIslandView
+    private lateinit var islandSpacer: View
     private var currentTab = 0
 
     private lateinit var modeBtn1: TextView
@@ -234,7 +238,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ClickStore.ensureLoaded(this)
-        currentTab = (savedInstanceState?.getInt("tab", 0) ?: 0).coerceIn(0, 2)
+        currentTab = (savedInstanceState?.getInt("tab", 0) ?: 0).coerceIn(0, 3)
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -247,9 +251,13 @@ class MainActivity : Activity() {
         themeSwitch.setChecked(ClickStore.darkMode, false)
         themeSwitch.onChanged = { dark -> onThemeToggled(dark) }
 
-        // Thanh tab dưới: Trang chủ · Kịch bản · Cài đặt (giữ một đối tượng để hiệu ứng không bị ngắt)
-        navBar = NotchTabBar(this, listOf("Trang chủ", "Kịch bản", "Cài đặt"))
+        // Thanh tab dưới: Trang chủ · Kịch bản · Công cụ · Cài đặt (giữ một đối tượng để hiệu ứng không bị ngắt)
+        navBar = NotchTabBar(this, listOf("Trang chủ", "Kịch bản", "Công cụ", "Cài đặt"))
         navBar.onSelect = { i -> showTab(i) }
+
+        // Dynamic Island (bật/tắt ở trang Công cụ), giữ một đối tượng để trạng thái không mất khi dựng lại giao diện
+        dynIsland = DynamicIslandView(this)
+        islandSpacer = View(this)
 
         container = FrameLayout(this)
         setContentView(container)
@@ -305,7 +313,7 @@ class MainActivity : Activity() {
     }
 
     private fun buildUi() {
-        val keepScrolls = IntArray(3) { pageScrolls[it]?.scrollY ?: 0 }
+        val keepScrolls = IntArray(4) { pageScrolls[it]?.scrollY ?: 0 }
         applySystemBars()
         container.setBackgroundColor(cBg)
 
@@ -321,6 +329,7 @@ class MainActivity : Activity() {
         }
         val home = newPage()
         val scripts = newPage()
+        val tools = newPage()
         val settings = newPage()
 
         // Tiêu đề (trái) + nút ngày–đêm (góc trên phải)
@@ -352,7 +361,7 @@ class MainActivity : Activity() {
         // Thẻ chế độ 1 mục tiêu
         val card1 = makeCard()
         card1.addView(cardTitle("CHẾ ĐỘ 1 MỤC TIÊU"))
-        card1.addView(menuRow(MenuGlyph.GEAR, "Cài đặt") { goTab(2) })
+        card1.addView(menuRow(MenuGlyph.GEAR, "Cài đặt") { goTab(3) })
         modeBtn1 = modeButton(1)
         card1.addView(modeBtn1)
         home.addView(card1)
@@ -360,7 +369,7 @@ class MainActivity : Activity() {
         // Thẻ chế độ nhiều mục tiêu
         val card2 = makeCard()
         card2.addView(cardTitle("CHẾ ĐỘ NHIỀU MỤC TIÊU"))
-        card2.addView(menuRow(MenuGlyph.GEAR, "Cài đặt") { goTab(2) })
+        card2.addView(menuRow(MenuGlyph.GEAR, "Cài đặt") { goTab(3) })
         card2.addView(menuRow(MenuGlyph.INFO, "Hướng dẫn") { showGuide() })
         card2.addView(menuRow(MenuGlyph.WRENCH, "Quản lý cấu hình") { goTab(1) })
         modeBtn2 = modeButton(2)
@@ -527,7 +536,42 @@ class MainActivity : Activity() {
         clearBtnV = clearBtn
         scripts.addView(buildEmptyCard(), 0)
 
-        val pages = arrayOf(home, scripts, settings)
+        // Trang Công cụ: bật/tắt Dynamic Island
+        val toolCard = makeCard()
+        toolCard.addView(cardTitle("CÔNG CỤ"))
+        val islandRow = LinearLayout(this)
+        islandRow.orientation = LinearLayout.HORIZONTAL
+        islandRow.gravity = Gravity.CENTER_VERTICAL
+        islandRow.setPadding(0, dp(8), 0, dp(8))
+        val islandTxt = LinearLayout(this)
+        islandTxt.orientation = LinearLayout.VERTICAL
+        islandTxt.layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        islandTxt.addView(textView("Dynamic Island", 16f, cText, false))
+        val islandHint = textView("Hiện viên thuốc đen ở đầu màn hình app. Chạm để mở rộng, vuốt ngang để đổi giữa hẹn giờ, nhạc và cuộc gọi.", 13f, cSub, false)
+        islandHint.setPadding(0, dp(2), 0, 0)
+        islandTxt.addView(islandHint)
+        islandRow.addView(islandTxt)
+        val islandSw = Switch(this)
+        islandSw.isChecked = ClickStore.islandOn
+        islandSw.contentDescription = "Dynamic Island"
+        val swStates = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+        islandSw.thumbTintList = ColorStateList(swStates, intArrayOf(Color.WHITE, Color.rgb(200, 200, 210)))
+        islandSw.trackTintList = ColorStateList(swStates, intArrayOf(cGreen, cGray))
+        val swLp2 = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        swLp2.setMargins(dp(12), 0, 0, 0)
+        islandSw.layoutParams = swLp2
+        islandSw.setOnCheckedChangeListener { _, on ->
+            ClickStore.islandOn = on
+            ClickStore.save(this@MainActivity)
+            if (!on) dynIsland.collapseNow()
+            applyIslandVisibility()
+        }
+        islandRow.setOnClickListener { islandSw.toggle() }
+        islandRow.addView(islandSw)
+        toolCard.addView(islandRow)
+        tools.addView(toolCard)
+
+        val pages = arrayOf(home, scripts, tools, settings)
         val frame = FrameLayout(this)
         for (i in pages.indices) {
             val sc = ScrollView(this)
@@ -547,6 +591,9 @@ class MainActivity : Activity() {
         }
 
         (navBar.parent as? ViewGroup)?.removeView(navBar)
+        // Chỗ trống phía trên tiêu đề để viên thuốc không đè lên chữ khi bật Dynamic Island
+        islandSpacer = View(this)
+        col.addView(islandSpacer, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(14)))
         col.addView(header)
         col.addView(
             frame,
@@ -567,6 +614,17 @@ class MainActivity : Activity() {
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         )
+        // Dynamic Island nổi phía trên cùng, chỉ nhận chạm trong vùng viên thuốc
+        container.addView(
+            dynIsland,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(190),
+                Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            )
+        )
+        applyIslandVisibility()
+        dynIsland.invalidate()
         navBar.setSelectedIndex(currentTab)
         navBar.applyTheme()
 
@@ -1015,6 +1073,13 @@ class MainActivity : Activity() {
         b.layoutParams = lp
         b.setOnClickListener { onModeButton(mode) }
         return b
+    }
+
+    /** Hiện/ẩn Dynamic Island và chỗ trống phía trên tiêu đề theo công tắc ở trang Công cụ. */
+    private fun applyIslandVisibility() {
+        val on = ClickStore.islandOn
+        dynIsland.visibility = if (on) View.VISIBLE else View.GONE
+        islandSpacer.visibility = if (on) View.VISIBLE else View.GONE
     }
 
     /** Chuyển sang tab khác (thanh tab dưới cũng trượt theo). */

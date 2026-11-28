@@ -64,6 +64,7 @@ object ClickStore {
     var jitterDelayPct = 0   // ngẫu nhiên độ trễ ± % (0 = tắt)
     var jitterPx = 0         // lệch vị trí ngẫu nhiên ± px (0 = tắt)
     var darkMode = true      // chế độ tối (true) / sáng (false) của app và bảng nổi
+    var islandOn = false     // Dynamic Island trong app (bật/tắt ở trang Công cụ)
     var startDelaySec = 0    // đếm ngược trước khi chạy (giây, 0 = chạy ngay)
     var startAt = ""         // hẹn giờ bắt đầu HH:mm[:ss] (trống = không hẹn)
     var volumeHotkey = false // phím giảm âm lượng bật/dừng
@@ -322,6 +323,7 @@ object ClickStore {
         jitterDelayPct = p.getInt("jitterDelayPct", 0).coerceIn(0, 100)
         jitterPx = p.getInt("jitterPx", 0).coerceIn(0, 100)
         darkMode = p.getBoolean("darkMode", true)
+        islandOn = p.getBoolean("islandOn", false)
 
         profiles.clear()
         activeIndex = 0
@@ -373,6 +375,7 @@ object ClickStore {
             .putInt("jitterDelayPct", jitterDelayPct)
             .putInt("jitterPx", jitterPx)
             .putBoolean("darkMode", darkMode)
+            .putBoolean("islandOn", islandOn)
             .putString("profiles", arr.toString())
             .putInt("active", activeIndex)
             .apply()

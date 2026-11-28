@@ -119,6 +119,12 @@ private fun ntbIcon(kind: Int): Path {
             p.moveTo(9f, 16f)
             p.lineTo(15f, 16f)
         }
+        2 -> { // Công cụ (bốn ô vuông bo góc)
+            p.addRoundRect(4f, 4f, 10f, 10f, 1.5f, 1.5f, Path.Direction.CW)
+            p.addRoundRect(14f, 4f, 20f, 10f, 1.5f, 1.5f, Path.Direction.CW)
+            p.addRoundRect(4f, 14f, 10f, 20f, 1.5f, 1.5f, Path.Direction.CW)
+            p.addRoundRect(14f, 14f, 20f, 20f, 1.5f, 1.5f, Path.Direction.CW)
+        }
         else -> { // Cài đặt (hai thanh trượt)
             p.moveTo(4f, 7f)
             p.lineTo(13f, 7f)
