@@ -40,6 +40,16 @@
                 android:value="Overlay control panel for user-configured automatic touch actions" />
         </service>
 
+        <!-- Dynamic Island nổi trên mọi app (lớp phủ) -->
+        <service
+            android:name=".IslandService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Overlay status pill showing user-enabled timer, music and call activities" />
+        </service>
+
         <service
             android:name=".QuickTileService"
             android:exported="true"
