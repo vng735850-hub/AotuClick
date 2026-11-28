@@ -10,7 +10,7 @@ import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
-enum class IconKind { PLAY, PAUSE, STOP, PLUS, MINUS, GEAR, CLOSE, GRIP, COLLAPSE, SWIPE, LOGO, EYE, EYE_OFF }
+enum class IconKind { PLAY, PAUSE, STOP, PLUS, MINUS, GEAR, CLOSE, GRIP, COLLAPSE, SWIPE, LOGO, EYE, EYE_OFF, DOC, IMPORT }
 
 /** Biểu tượng vẽ hoàn toàn bằng code, không cần file ảnh hay tài nguyên. */
 class IconView(
@@ -112,6 +112,39 @@ class IconView(
                     paint.strokeWidth = s * 0.26f
                     canvas.drawLine(cx - s * 0.7f, cy + s * 0.75f, cx + s * 0.7f, cy - s * 0.75f, paint)
                 }
+            }
+            IconKind.DOC -> {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = s * 0.2f
+                path.reset()
+                path.moveTo(cx - s * 0.6f, cy - s * 0.85f)
+                path.lineTo(cx + s * 0.15f, cy - s * 0.85f)
+                path.lineTo(cx + s * 0.6f, cy - s * 0.4f)
+                path.lineTo(cx + s * 0.6f, cy + s * 0.85f)
+                path.lineTo(cx - s * 0.6f, cy + s * 0.85f)
+                path.close()
+                canvas.drawPath(path, paint)
+                path.reset()
+                path.moveTo(cx + s * 0.15f, cy - s * 0.85f)
+                path.lineTo(cx + s * 0.15f, cy - s * 0.4f)
+                path.lineTo(cx + s * 0.6f, cy - s * 0.4f)
+                canvas.drawPath(path, paint)
+            }
+            IconKind.IMPORT -> {
+                paint.style = Paint.Style.STROKE
+                paint.strokeWidth = s * 0.2f
+                canvas.drawLine(cx, cy - s * 0.8f, cx, cy + s * 0.3f, paint)
+                path.reset()
+                path.moveTo(cx - s * 0.45f, cy - s * 0.15f)
+                path.lineTo(cx, cy + s * 0.3f)
+                path.lineTo(cx + s * 0.45f, cy - s * 0.15f)
+                canvas.drawPath(path, paint)
+                path.reset()
+                path.moveTo(cx - s * 0.7f, cy + s * 0.45f)
+                path.lineTo(cx - s * 0.7f, cy + s * 0.85f)
+                path.lineTo(cx + s * 0.7f, cy + s * 0.85f)
+                path.lineTo(cx + s * 0.7f, cy + s * 0.45f)
+                canvas.drawPath(path, paint)
             }
             IconKind.LOGO -> {
                 paint.style = Paint.Style.STROKE

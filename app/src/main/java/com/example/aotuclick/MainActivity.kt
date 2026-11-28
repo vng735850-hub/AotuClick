@@ -1,6 +1,7 @@
 package com.example.autoclick
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
@@ -22,8 +23,10 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.InputMethodManager
 import android.widget.CheckBox
 import android.widget.EditText
@@ -71,6 +74,19 @@ class MainActivity : Activity() {
     private lateinit var batDot: View
     private lateinit var batBtn: TextView
     private lateinit var undoBtn: TextView
+
+    // Trạng thái trống của trang Kịch bản (thư mục nuốt giấy)
+    private lateinit var profCardV: LinearLayout
+    private lateinit var clearBtnV: TextView
+    private lateinit var emptyWrap: FrameLayout
+    private lateinit var emptyUndo: TextView
+    private var emptyArt: EmptyFolderView? = null
+    private var emptyFly: FlyPaperView? = null
+    private var emptyImportBtn: View? = null
+    private var lastBlank: Boolean? = null
+    private var swallowing = false
+    private val ui = Handler(Looper.getMainLooper())
+    private val springI = PathInterpolator(.34f, 1.45f, .64f, 1f)
     private lateinit var startDelayInput: EditText
     private lateinit var startAtInput: EditText
     private lateinit var profileName: TextView
@@ -425,6 +441,7 @@ class MainActivity : Activity() {
         rowC.addView(weightPill("Nhập file JSON", cGray) { importProfiles() })
         profCard.addView(rowC)
         scripts.addView(profCard)
+        profCardV = profCard
 
         // Thẻ cài đặt
         val setCard = makeCard()
@@ -507,6 +524,8 @@ class MainActivity : Activity() {
         clp.setMargins(0, 0, 0, dp(12))
         clearBtn.layoutParams = clp
         scripts.addView(clearBtn)
+        clearBtnV = clearBtn
+        scripts.addView(buildEmptyCard(), 0)
 
         val pages = arrayOf(home, scripts, settings)
         val frame = FrameLayout(this)
@@ -573,6 +592,239 @@ class MainActivity : Activity() {
         profileName.text = c.name
         undoBtn.visibility = if (ClickStore.hasUndo) View.VISIBLE else View.GONE
         profileInfo.text = "Kịch bản ${ClickStore.activeIndex + 1}/${ClickStore.profiles.size} · ${c.actions.size} nút"
+        updateEmptyState(true)
+    }
+
+    // ---------- Trạng thái trống: thư mục nuốt giấy ----------
+
+    private val animOn: Boolean get() = ValueAnimator.areAnimatorsEnabled()
+
+    private fun buildEmptyCard(): FrameLayout {
+        lastBlank = null
+        swallowing = false
+        val wrap = FrameLayout(this)
+        wrap.clipChildren = false
+        val wlp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        wlp.setMargins(0, 0, 0, dp(12))
+        wrap.layoutParams = wlp
+
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.gravity = Gravity.CENTER_HORIZONTAL
+        card.clipChildren = false
+        card.background = roundBg(cCard, 18, 0, 0)
+        card.setPadding(dp(16), dp(22), dp(16), dp(20))
+
+        val art = EmptyFolderView(this)
+        emptyArt = art
+        card.addView(art, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        val title = textView("Chưa có kịch bản", 18f, cText, true)
+        title.gravity = Gravity.CENTER
+        val tlp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        tlp.topMargin = dp(12)
+        card.addView(title, tlp)
+
+        val sub = textView("Nhập file JSON hoặc tạo kịch bản đầu tiên", 13.5f, cSub, false)
+        sub.gravity = Gravity.CENTER
+        val slp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        slp.topMargin = dp(6)
+        card.addView(sub, slp)
+
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        row.clipChildren = false
+        val newBtn = tplButton("Tạo mới", Color.rgb(61, 139, 255), IconKind.DOC) { v ->
+            if (swallowing) return@tplButton
+            askName("Kịch bản mới", ClickStore.DEFAULT_NAME) { n ->
+                saveSettings()
+                swallow(v, Color.rgb(61, 139, 255)) {
+                    ClickStore.current().name = n
+                    ClickStore.userMade = true
+                    afterProfileChange()
+                }
+            }
+        }
+        val impBtn = tplButton("Nhập JSON", Color.rgb(255, 138, 61), IconKind.IMPORT) {
+            if (!swallowing) importProfiles()
+        }
+        emptyImportBtn = impBtn
+        row.addView(newBtn)
+        row.addView(impBtn)
+        val rlp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        rlp.topMargin = dp(18)
+        card.addView(row, rlp)
+
+        // Sau khi xoá hết, vẫn hoàn tác được (nút Hoàn tác ở thẻ Kịch bản đang ẩn)
+        emptyUndo = pill("Hoàn tác lần xoá vừa rồi", cBlue) {
+            ClickStore.undo()
+            afterProfileChange()
+            Toast.makeText(this@MainActivity, "Đã hoàn tác", Toast.LENGTH_SHORT).show()
+        }
+        emptyUndo.visibility = View.GONE
+        val ulp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        ulp.topMargin = dp(14)
+        card.addView(emptyUndo, ulp)
+
+        wrap.addView(card, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT
+        ))
+        val fly = FlyPaperView(this)
+        emptyFly = fly
+        wrap.addView(fly, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT
+        ))
+        emptyWrap = wrap
+        return wrap
+    }
+
+    /** Nút mẫu: chạm giữ thì thư mục hé mở (như hover), nhả ra thì bấm. */
+    private fun tplButton(label: String, color: Int, kind: IconKind, onClick: (View) -> Unit): LinearLayout {
+        val b = LinearLayout(this)
+        b.orientation = LinearLayout.HORIZONTAL
+        b.gravity = Gravity.CENTER_VERTICAL
+        b.setPadding(dp(8), 0, dp(14), 0)
+        b.background = roundBg(cField, 13, 0, 0)
+        val ic = IconView(this, kind)
+        ic.background = roundBg(color, 8, 0, 0)
+        val ilp = LinearLayout.LayoutParams(dp(26), dp(26))
+        ilp.rightMargin = dp(7)
+        b.addView(ic, ilp)
+        b.addView(textView(label, 13f, cSub, true))
+        val blp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(40))
+        blp.setMargins(dp(3), 0, dp(3), 0)
+        b.layoutParams = blp
+        b.isClickable = true
+        b.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    emptyArt?.setHover(true)
+                    v.animate().scaleX(.94f).scaleY(.94f).setDuration(120L).start()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    emptyArt?.setHover(false)
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(350L).setInterpolator(springI).start()
+                }
+            }
+            false
+        }
+        b.setOnClickListener { onClick(it) }
+        return b
+    }
+
+    /**
+     * Tờ giấy bay từ nút vào thư mục, thư mục nuốt rồi mới chạy onDone (tạo kịch bản).
+     * Tắt hoạt ảnh trong hệ thống (giảm chuyển động) thì chạy onDone ngay.
+     */
+    private fun swallow(from: View, color: Int, delayMs: Long = 0L, onDone: () -> Unit) {
+        val art = emptyArt
+        val fly = emptyFly
+        if (swallowing) return
+        if (art == null || fly == null || !::emptyWrap.isInitialized ||
+            emptyWrap.visibility != View.VISIBLE || !animOn
+        ) {
+            onDone()
+            return
+        }
+        swallowing = true
+        ui.postDelayed({
+            if (isFinishing || isDestroyed) return@postDelayed
+            val wl = IntArray(2)
+            val fl = IntArray(2)
+            val al = IntArray(2)
+            emptyWrap.getLocationInWindow(wl)
+            from.getLocationInWindow(fl)
+            art.getLocationInWindow(al)
+            val x0 = fl[0] - wl[0] + from.width / 2f
+            val y0 = fl[1] - wl[1] + from.height / 2f
+            val x1 = al[0] - wl[0] + art.width / 2f
+            val y1 = al[1] - wl[1] + art.height * 0.3f
+            art.setHover(false)
+            art.setEating(true)
+            fly.launch(x0, y0, x1 - x0, y1 - y0, color) {}
+            ui.postDelayed({
+                art.setEating(false)
+                art.gulp()
+            }, 700L)
+            ui.postDelayed({
+                swallowing = false
+                onDone()
+            }, 1180L)
+        }, delayMs)
+    }
+
+    private fun applyBlank(blank: Boolean) {
+        emptyWrap.visibility = if (blank) View.VISIBLE else View.GONE
+        profCardV.visibility = if (blank) View.GONE else View.VISIBLE
+        clearBtnV.visibility = if (blank) View.GONE else View.VISIBLE
+    }
+
+    /** Chưa có kịch bản → thẻ thư mục trống; có rồi → thẻ Kịch bản như cũ (có chuyển cảnh). */
+    private fun updateEmptyState(animate: Boolean) {
+        if (!::emptyWrap.isInitialized || !::profCardV.isInitialized || !::clearBtnV.isInitialized) return
+        emptyUndo.visibility = if (ClickStore.hasUndo) View.VISIBLE else View.GONE
+        if (swallowing) return
+        val blank = ClickStore.isBlank()
+        if (lastBlank == blank) return
+        val first = lastBlank == null
+        lastBlank = blank
+
+        val all = listOf<View>(emptyWrap, profCardV, clearBtnV)
+        all.forEach {
+            it.animate().cancel()
+            it.alpha = 1f; it.scaleX = 1f; it.scaleY = 1f; it.translationY = 0f
+        }
+        if (first || !animate || !animOn) {
+            applyBlank(blank)
+            return
+        }
+        if (blank) {
+            // Danh sách thu lại, thư mục rơi xuống rồi nằm yên (xoá hết)
+            listOf<View>(profCardV, clearBtnV).forEach { v ->
+                v.animate().alpha(0f).setDuration(200L).withEndAction {
+                    if (lastBlank == true) { v.visibility = View.GONE; v.alpha = 1f }
+                }.start()
+            }
+            ui.postDelayed({
+                if (lastBlank != true || isFinishing || isDestroyed) return@postDelayed
+                applyBlank(true)
+                emptyWrap.alpha = 0f
+                emptyWrap.animate().alpha(1f).setDuration(300L).start()
+                emptyArt?.drop()
+            }, 160L)
+        } else {
+            // Thư mục mờ đi, rồi mục đầu tiên hiện ra thành danh sách
+            emptyWrap.animate().alpha(0f).scaleX(.94f).scaleY(.94f).setDuration(220L).withEndAction {
+                if (lastBlank != false) return@withEndAction
+                applyBlank(false)
+                emptyWrap.alpha = 1f; emptyWrap.scaleX = 1f; emptyWrap.scaleY = 1f
+                profCardV.alpha = 0f
+                profCardV.translationY = -dp(14).toFloat()
+                profCardV.scaleX = .97f; profCardV.scaleY = .97f
+                profCardV.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+                    .setDuration(550L).setInterpolator(springI).start()
+                clearBtnV.alpha = 0f
+                clearBtnV.animate().alpha(1f).setDuration(300L).setStartDelay(200L).start()
+            }.start()
+        }
+    }
+
+    override fun onDestroy() {
+        ui.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 
     /** Nạp lại các ô nhập theo kịch bản đang chọn. */
@@ -642,6 +894,7 @@ class MainActivity : Activity() {
     private fun renameProfile() {
         askName("Đổi tên kịch bản", ClickStore.current().name) { n ->
             ClickStore.current().name = n
+            ClickStore.userMade = true
             afterProfileChange()
         }
     }
@@ -649,7 +902,7 @@ class MainActivity : Activity() {
     private fun deleteProfile() {
         val only = ClickStore.profiles.size <= 1
         val msg = if (only) {
-            "Đây là kịch bản duy nhất, các nút sẽ được xoá hết nhưng kịch bản vẫn giữ lại."
+            "Đây là kịch bản duy nhất, xoá xong app sẽ về trạng thái chưa có kịch bản (có thể Hoàn tác)."
         } else {
             "Xoá kịch bản \"" + ClickStore.current().name + "\"?"
         }
@@ -696,9 +949,18 @@ class MainActivity : Activity() {
             } else if (requestCode == REQ_IMPORT) {
                 val text = contentResolver.openInputStream(uri)
                     ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                val wasBlank = lastBlank == true
                 val n = ClickStore.importJson(this, text)
-                afterProfileChange()
-                Toast.makeText(this, "Đã nhập $n kịch bản", Toast.LENGTH_SHORT).show()
+                val applyImport = {
+                    afterProfileChange()
+                    Toast.makeText(this, "Đã nhập $n kịch bản", Toast.LENGTH_SHORT).show()
+                }
+                val btn = emptyImportBtn
+                if (wasBlank && n > 0 && btn != null) {
+                    swallow(btn, Color.rgb(255, 138, 61), 350L) { applyImport() }
+                } else {
+                    applyImport()
+                }
             }
         } catch (e: Exception) {
             Toast.makeText(this, "Lỗi đọc/ghi file: ${e.message}", Toast.LENGTH_LONG).show()

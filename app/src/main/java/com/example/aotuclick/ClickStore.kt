@@ -67,6 +67,14 @@ object ClickStore {
     var startDelaySec = 0    // đếm ngược trước khi chạy (giây, 0 = chạy ngay)
     var startAt = ""         // hẹn giờ bắt đầu HH:mm[:ss] (trống = không hẹn)
     var volumeHotkey = false // phím giảm âm lượng bật/dừng
+    // Đã có kịch bản do người dùng tạo / nhập / đổi tên (false = chỉ còn kịch bản trống mặc định)
+    var userMade = false
+
+    const val DEFAULT_NAME = "Kịch bản 1"
+
+    /** Chưa có kịch bản nào được lưu/nhập: chỉ có kịch bản trống mặc định. */
+    fun isBlank(): Boolean = !userMade && profiles.size <= 1 && current().actions.isEmpty()
+
     var panelMode = 2        // kiểu bảng điều khiển: 1 = một điểm chỉ chạm, 2 = nhiều điểm (di chuyển + chạm)
 
     private const val PREF = "nvpklick"
@@ -74,7 +82,7 @@ object ClickStore {
 
     /** Kịch bản đang chọn (luôn có ít nhất một kịch bản). */
     fun current(): Profile {
-        if (profiles.isEmpty()) profiles.add(Profile("Kịch bản 1"))
+        if (profiles.isEmpty()) profiles.add(Profile(DEFAULT_NAME))
         if (activeIndex < 0 || activeIndex >= profiles.size) activeIndex = 0
         return profiles[activeIndex]
     }
@@ -100,6 +108,7 @@ object ClickStore {
     }
 
     fun addProfile(name: String) {
+        userMade = true
         profiles.add(Profile(name))
         activeIndex = profiles.size - 1
     }
@@ -114,14 +123,21 @@ object ClickStore {
             c.actions.map { it.copy() }.toMutableList()
         )
         profiles.add(copy)
+        userMade = true
         activeIndex = profiles.size - 1
     }
 
-    /** Xoá kịch bản đang chọn. Nếu chỉ còn một kịch bản thì làm trống nó. */
+    /** Xoá kịch bản đang chọn. Nếu chỉ còn một kịch bản thì đưa về trạng thái trống ban đầu. */
     fun deleteActive() {
         snapshot()
         if (profiles.size <= 1) {
-            current().actions.clear()
+            val c = current()
+            c.actions.clear()
+            c.name = DEFAULT_NAME
+            c.loops = 0
+            c.stopMinutes = 0
+            c.stopTaps = 0
+            userMade = false
             return
         }
         profiles.removeAt(activeIndex)
@@ -228,6 +244,7 @@ object ClickStore {
 
     private var undoJson: String? = null
     private var undoActive = 0
+    private var undoUserMade = false
 
     val hasUndo: Boolean get() = undoJson != null
 
@@ -235,6 +252,7 @@ object ClickStore {
     fun snapshot() {
         undoJson = profilesToJson().toString()
         undoActive = activeIndex
+        undoUserMade = userMade
     }
 
     fun undo() {
@@ -245,6 +263,7 @@ object ClickStore {
                 profiles.clear()
                 profiles.addAll(list)
                 activeIndex = undoActive
+                userMade = undoUserMade
             }
         } catch (e: Exception) {
         }
@@ -286,7 +305,10 @@ object ClickStore {
             val fy = dm.heightPixels.toFloat() / sh
             list.forEach { scaleActions(it.actions, fx, fy) }
         }
+        // Đang trống (chỉ có kịch bản mặc định) thì kịch bản nhập vào thay thế nó
+        if (isBlank()) profiles.clear()
         profiles.addAll(list)
+        userMade = true
         activeIndex = profiles.size - list.size
         return list.size
     }
@@ -325,6 +347,9 @@ object ClickStore {
         // Dữ liệu lưu ở kích thước màn hình khác (vd. xoay ngang/dọc) → co giãn theo tỷ lệ
         val dm = ctx.applicationContext.resources.displayMetrics
         rescale(p.getInt("sw", 0), p.getInt("sh", 0), dm.widthPixels, dm.heightPixels)
+        userMade = p.getBoolean("userMade", false)
+        // Dữ liệu cũ: có nhiều kịch bản hoặc tên đã đổi thì coi như do người dùng tạo
+        if (!userMade && (profiles.size > 1 || profiles.any { it.name != DEFAULT_NAME })) userMade = true
         startDelaySec = p.getInt("startDelaySec", 0).coerceIn(0, 3600)
         startAt = p.getString("startAt", "") ?: ""
         volumeHotkey = p.getBoolean("volumeHotkey", false)
@@ -342,6 +367,7 @@ object ClickStore {
             .putString("startAt", startAt)
             .putBoolean("volumeHotkey", volumeHotkey)
             .putInt("panelMode", panelMode)
+            .putBoolean("userMade", userMade)
             .putLong("defaultDelay", defaultDelay)
             .putInt("panelAlpha", panelAlpha)
             .putInt("jitterDelayPct", jitterDelayPct)
