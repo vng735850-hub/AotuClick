@@ -229,6 +229,12 @@ class NotchTabBar(context: Context, labels: List<String>) : FrameLayout(context)
         select(i.coerceIn(0, tabs.size - 1), focus = false, animate = false, notify = false)
     }
 
+    /** Chọn tab bằng code: có hiệu ứng trượt và gọi onSelect. */
+    fun selectTab(i: Int) {
+        if (tabs.isEmpty()) return
+        select(i.coerceIn(0, tabs.size - 1), focus = false, animate = true, notify = true)
+    }
+
     /** Vẽ lại khi đổi chế độ sáng/tối. */
     fun applyTheme() {
         invalidate()
