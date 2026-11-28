@@ -11,8 +11,8 @@ android {
         applicationId = "com.example.autoclick"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "1.2.2"
+        versionCode = 7
+        versionName = "1.2.2.2"
     }
     buildTypes {
         release { isMinifyEnabled = false }
