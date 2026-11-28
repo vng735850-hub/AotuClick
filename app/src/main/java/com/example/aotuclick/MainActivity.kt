@@ -1058,8 +1058,10 @@ class MainActivity : Activity() {
     }
 
     /** Bật/tắt Dynamic Island nổi trên mọi app. Thiếu quyền hiển thị trên ứng dụng khác thì mở màn hình cấp quyền. */
+    private fun islandAllowed(): Boolean = Settings.canDrawOverlays(this) || AutoClickService.instance != null
+
     private fun setIsland(on: Boolean) {
-        if (on && !Settings.canDrawOverlays(this)) {
+        if (on && !islandAllowed()) {
             Toast.makeText(this, "Hãy cấp quyền hiển thị trên ứng dụng khác trước", Toast.LENGTH_LONG).show()
             startActivity(
                 Intent(
@@ -1087,7 +1089,7 @@ class MainActivity : Activity() {
 
     /** Khởi động lại dịch vụ nếu đang bật mà bị hệ thống tắt; cập nhật công tắc nếu đã tắt từ thông báo. */
     private fun syncIsland() {
-        if (pendingIsland && Settings.canDrawOverlays(this)) {
+        if (pendingIsland && islandAllowed()) {
             // Vừa cấp quyền xong: tự bật luôn, không bắt bật công tắc lần nữa
             pendingIsland = false
             ClickStore.islandOn = true
@@ -1096,7 +1098,7 @@ class MainActivity : Activity() {
             syncIslandSwitch(true)
             return
         }
-        if (ClickStore.islandOn && Settings.canDrawOverlays(this)) {
+        if (ClickStore.islandOn && islandAllowed()) {
             if (IslandService.instance == null) IslandService.start(this)
         } else if (ClickStore.islandOn) {
             ClickStore.islandOn = false
