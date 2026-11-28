@@ -564,6 +564,16 @@ class MainActivity : Activity() {
         islandRow.setOnClickListener { islandSw.toggle() }
         islandRow.addView(islandSw)
         toolCard.addView(islandRow)
+        val diagBtn = android.widget.Button(this)
+        diagBtn.text = "Kiểm tra Dynamic Island"
+        diagBtn.setOnClickListener {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Tình trạng Dynamic Island")
+                .setMessage(IslandService.report(this))
+                .setPositiveButton("Đóng", null)
+                .show()
+        }
+        toolCard.addView(diagBtn)
         tools.addView(toolCard)
 
         val pages = arrayOf(home, scripts, tools, settings)
